@@ -27,6 +27,7 @@ Install: `npm install && cd client && npm install && cd ../server && npm install
 - **Game logic** lives in `client/src/tetris.js` — pure JS, zero React deps. All constants (board size, piece shapes, colors, speeds) and pure functions (`isValid`, `lockPiece`, `clearLines`, etc.) are exported from there.
 - **UI state** uses `useReducer` in `client/src/App.jsx`. No Redux/Zustand. Actions: `START`, `MOVE`, `ROTATE`, `HARD_DROP`, `TICK`, `RESET`.
 - **Rendering**: one `App` component with inline `Board`, `Cell`, `NextPiece` sub-components. All styles in `App.css` + `index.css` — no CSS framework.
+- **Background effects** are rendered by `BackgroundParticles` and `DataStreams` components in `App.jsx` — floating neon dots, data stream rain, animated grid, CRT scanline, and pulsing ambient glow. All styling in `App.css` + `index.css` with CSS keyframe animations. `pointer-events: none` and `z-index: 0` keep effects behind game content.
 - **Backend** has 3 endpoints (`GET /api/health`, `GET /api/scores`, `POST /api/scores`). MongoDB is optional — server starts without it (logs error but doesn't crash).
 - **Leaderboard UI is not yet connected** to the API (roadmap item).
 
@@ -36,7 +37,7 @@ Install: `npm install && cd client && npm install && cd ../server && npm install
 - No TypeScript — plain `.jsx` / `.js`.
 - No tests — no test framework installed.
 - Game board is a 2D array (`0` = empty cell, piece name string = filled, `'ghost'` = ghost cell).
-- State has `nextQueue` (array of 3 piece types) shown below the board — replaces the old single `nextType`.
+- State has `nextType` (single piece) shown in the top bar — preview of the next piece.
 - CSS uses CSS custom properties for neon colors in `index.css`.
 
 ## Gotchas
@@ -48,3 +49,4 @@ Install: `npm install && cd client && npm install && cd ../server && npm install
 - `SPEEDS` array in `tetris.js:97` defines 15 levels. Index is `level - 1`.
 - Server port is `process.env.PORT || 3001`. MongoDB URI is `process.env.MONGO_URI || 'mongodb://localhost:27017/tetris'`.
 - `client/dist/` is gitignored. After build, serve it with any static server or wire it into Express.
+- Background effects use CSS animations (`particle-float`, `data-flow`, `grid-scroll`, `scanline`, `glow-pulse`, `bg-shift`). They are purely visual and don't affect gameplay — safe to modify freely.
