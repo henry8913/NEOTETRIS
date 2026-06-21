@@ -15,9 +15,17 @@
   content: '';
   position: fixed;
   inset: 0;
-  background: radial-gradient(ellipse at 50% 0%, rgba(0, 240, 255, 0.06) 0%, transparent 60%);
+  background: radial-gradient(ellipse at 50% 0%, rgba(0, 240, 255, 0.08) 0%, rgba(255, 0, 170, 0.05) 30%, transparent 60%);
+  background-size: 200% 200%;
+  background-position: 0% 0%;
   pointer-events: none;
   z-index: 0;
+  animation: glow-pulse 4s ease-in-out infinite, bg-shift 8s ease-in-out infinite;
+}
+
+@keyframes bg-shift {
+  0%, 100% { background-position: 0% 0%; }
+  50% { background-position: 100% 100%; }
 }
 
 /* ── Top Bar ── */
@@ -375,6 +383,81 @@
 
 .overlay.game-over-overlay h2 {
   animation: glitch 0.3s ease-in-out 3;
+}
+
+/* ── Background Effects ── */
+.bg-particles {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.particle {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  left: var(--x);
+  bottom: -10px;
+  background: var(--color);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--color), 0 0 12px var(--color);
+  animation: particle-float var(--duration) var(--delay) linear infinite;
+  opacity: 0;
+}
+
+@keyframes particle-float {
+  0% {
+    transform: translateY(0) translateX(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.8;
+  }
+  90% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(-100dvh) translateX(var(--drift, 0px));
+    opacity: 0;
+  }
+}
+
+.data-streams {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.data-stream {
+  position: absolute;
+  top: -80px;
+  left: var(--left);
+  width: 2px;
+  height: 80px;
+  background: linear-gradient(to top, transparent, var(--neon-cyan), transparent);
+  opacity: 0;
+  animation: data-flow var(--duration) var(--delay) linear infinite;
+}
+
+@keyframes data-flow {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.5;
+  }
+  85% {
+    opacity: 0.3;
+  }
+  100% {
+    transform: translateY(100dvh);
+    opacity: 0;
+  }
 }
 
 /* ── Media Queries ── */

@@ -23,7 +23,12 @@ A cyberpunk-styled Tetris game built with **React 19** + **Vite 8** (frontend) a
 - **Rotation** with wall collision detection
 - **15 speed levels** — from 800ms down to 30ms per tick
 - **Scoring** — classic 100/300/500/800 points per line × level
-- **Cyberpunk UI** — neon glow, CRT scanlines, animated borders, dark theme
+- **Cyberpunk UI** — immersive neon atmosphere with animated background effects:
+  - **Animated grid** — scrolling neon grid that drifts downward
+  - **CRT scanline overlay** — sweeping scanline for retro monitor feel
+  - **Floating data particles** — neon dots drifting upward in cyberpunk colors
+  - **Data stream accents** — Matrix-style digital rain on screen edges
+  - **Pulsing ambient glow** — shifting cyan-to-magenta radial gradient
 - **Keyboard controls** — arrow keys + space + enter
 - **Touch controls** — on-screen buttons for mobile play
 - **Leaderboard API** — save and retrieve high scores (server required)
@@ -36,7 +41,7 @@ A cyberpunk-styled Tetris game built with **React 19** + **Vite 8** (frontend) a
 | Backend | Node.js, Express 4 |
 | Database | MongoDB + Mongoose 8 |
 | Fonts | Orbitron, Rajdhani (Google Fonts) |
-| Styling | Pure CSS with animations |
+| Styling | Pure CSS with keyframe animations |
 
 ## Project Structure
 

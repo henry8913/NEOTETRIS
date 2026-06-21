@@ -189,6 +189,78 @@ function NextPiece({ type }) {
   );
 }
 
+const NEON_COLORS = [
+  'var(--neon-cyan)',
+  'var(--neon-magenta)',
+  'var(--neon-green)',
+  'var(--neon-yellow)',
+  'var(--neon-purple)',
+];
+
+function createParticles() {
+  return Array.from({ length: 22 }, (_, i) => ({
+    id: i,
+    x: `${Math.random() * 100}%`,
+    delay: `${Math.random() * 12}s`,
+    duration: `${10 + Math.random() * 14}s`,
+    size: `${2 + Math.random() * 2.5}px`,
+    color: NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)],
+    drift: `${-30 + Math.random() * 60}px`,
+  }));
+}
+
+function createStreams() {
+  const positions = [1, 3.5, 96.5, 99];
+  return positions.map((left, i) => ({
+    id: i,
+    left: `${left}%`,
+    delay: `${i * 2.5}s`,
+    duration: `${2.5 + Math.random() * 2}s`,
+  }));
+}
+
+const PARTICLES = createParticles();
+const STREAMS = createStreams();
+
+function BackgroundParticles() {
+  return (
+    <div className="bg-particles" aria-hidden="true">
+      {PARTICLES.map((p) => (
+        <span
+          key={p.id}
+          className="particle"
+          style={{
+            '--x': p.x,
+            '--delay': p.delay,
+            '--duration': p.duration,
+            '--size': p.size,
+            '--color': p.color,
+            '--drift': p.drift,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DataStreams() {
+  return (
+    <div className="data-streams" aria-hidden="true">
+      {STREAMS.map((s) => (
+        <div
+          key={s.id}
+          className="data-stream"
+          style={{
+            '--left': s.left,
+            '--delay': s.delay,
+            '--duration': s.duration,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   const [state, dispatch] = useReducer(reducer, null, initialState);
   const tickRef = useRef(null);
@@ -243,6 +315,8 @@ export default function App() {
 
   return (
     <div className="tetris">
+      <DataStreams />
+      <BackgroundParticles />
       <header className="top-bar">
         <div className="stat"><span className="stat-label">Score</span><span className="stat-value">{state.score}</span></div>
         <div className="stat"><span className="stat-label">Level</span><span className="stat-value">{state.level}</span></div>

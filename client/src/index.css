@@ -13,6 +13,11 @@
   50% { opacity: 1; }
 }
 
+@keyframes grid-scroll {
+  0% { background-position: 0 0, 0 0; }
+  100% { background-position: 0 60px, 0 60px; }
+}
+
 :root {
   color-scheme: dark;
   --neon-cyan: #00f0ff;
@@ -46,6 +51,7 @@ body {
     linear-gradient(90deg, rgba(0, 240, 255, 0.02) 1px, transparent 1px),
     var(--bg-primary);
   background-size: 60px 60px, 60px 60px;
+  animation: grid-scroll 12s linear infinite;
 }
 
 body::after {
@@ -61,6 +67,7 @@ body::after {
   );
   pointer-events: none;
   z-index: 9999;
+  animation: scanline 8s linear infinite;
 }
 
 #root {
