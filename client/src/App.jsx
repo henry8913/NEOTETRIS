@@ -6,17 +6,13 @@ import {
 } from './tetris';
 import './App.css';
 
-function getNextType(bag, idx) {
-  return bag[idx % bag.length];
-}
-
 function fillBag(bag, idx) {
   while (bag.length <= idx + 7) bag.push(...generateBag());
   return bag;
 }
 
 function spawn(bag, idx) {
-  const type = getNextType(bag, idx);
+  const type = bag[idx % bag.length];
   return { type, ...spawnPosition(type), rotation: 0 };
 }
 
@@ -25,7 +21,7 @@ function initialState() {
   return {
     board: createBoard(),
     piece: spawn(bag, 0),
-    nextType: getNextType(bag, 1),
+    nextType: bag[1],
     bag,
     idx: 1,
     score: 0,
@@ -43,7 +39,7 @@ function reducer(state, action) {
       return {
         board: createBoard(),
         piece: spawn(bag, 0),
-        nextType: getNextType(bag, 1),
+        nextType: bag[1],
         bag, idx: 1,
         score: 0, level: 1, lines: 0,
         gameOver: false, started: true,
@@ -113,7 +109,7 @@ function lockReduce(state) {
     ...state,
     board: b,
     piece: nextPiece,
-    nextType: getNextType(newBag, nextIdx),
+    nextType: newBag[nextIdx],
     bag: newBag,
     idx: nextIdx,
     score: newScore,
@@ -177,8 +173,9 @@ function Board({ board, piece }) {
 function NextPiece({ type }) {
   if (!type) return null;
   const shape = getShape(type, 0);
+  const size = shape.length;
   return (
-    <div className="next-piece">
+    <div className="next-piece" style={{ gridTemplateColumns: `repeat(${size}, 11px)` }}>
       {shape.map((row, ri) =>
         row.map((cell, ci) => (
           <div
