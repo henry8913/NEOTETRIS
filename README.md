@@ -73,9 +73,7 @@ A cyberpunk-styled Tetris game built with **React 19** + **Vite 8** (frontend) a
 ### Install
 
 ```bash
-npm install
-cd client && npm install
-cd ../server && npm install
+npm install --prefix client && npm install --prefix server
 ```
 
 ### Run (development)
