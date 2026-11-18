@@ -1,51 +1,63 @@
-import express from 'express';
-import cors from 'cors';
-import mongoose from 'mongoose';
+/**
+ * Server entry point: env → store → app → listen.
+ * All the wiring lives here; the app itself is built in `app.js`.
+ */
 
-const app = express();
-const PORT = process.env.PORT || 3001;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/tetris';
+import { createApp } from './app.js';
+import { createStore, DEFAULT_MONGO_URI } from './store.js';
 
-app.use(cors());
-app.use(express.json());
+const PORT = Number.parseInt(process.env.PORT ?? '', 10) || 3001;
+const MONGO_URI = process.env.MONGO_URI || DEFAULT_MONGO_URI;
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+async function main() {
+  const store = await createStore({ mongoUri: MONGO_URI });
+  const app = createApp({ store, corsOrigin: CORS_ORIGIN });
 
-const scoreSchema = new mongoose.Schema({
-  name: { type: String, default: 'Anonymous', maxlength: 20 },
-  score: { type: Number, required: true },
-  level: Number,
-  lines: Number,
-  date: { type: Date, default: Date.now },
-});
+  const server = app.listen(PORT, () => {
+    console.log(`[server] NEOTETRIS API listening on http://localhost:${PORT}`);
+    console.log(`[server] Store: ${store.getStatus()}`);
+  });
 
-const Score = mongoose.model('Score', scoreSchema);
+  server.on('error', async (err) => {
+    console.error(`[server] Failed to start: ${err.message}`);
+    await store.close().catch(() => {});
+    process.exit(1);
+  });
 
-app.get('/api/scores', async (_req, res) => {
-  try {
-    const scores = await Score.find().sort({ score: -1 }).limit(10);
-    res.json(scores);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch scores' });
+  let shuttingDown = false;
+
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[server] ${signal} received — shutting down...`);
+
+    // Never hang forever on a stuck socket.
+    const force = setTimeout(() => {
+      console.error('[server] Shutdown timed out, forcing exit.');
+      process.exit(1);
+    }, 10_000);
+    force.unref();
+
+    try {
+      await new Promise((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+      await store.close();
+      clearTimeout(force);
+      console.log('[server] Shutdown complete.');
+      process.exit(0);
+    } catch (err) {
+      console.error(`[server] Error during shutdown: ${err.message}`);
+      process.exit(1);
+    }
   }
-});
 
-app.post('/api/scores', async (req, res) => {
-  try {
-    const { name, score, level, lines } = req.body;
-    const s = await Score.create({ name: name || 'Anonymous', score, level, lines });
-    res.status(201).json(s);
-  } catch (err) {
-    res.status(400).json({ error: 'Invalid data' });
-  }
-});
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+}
 
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok' });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+main().catch((err) => {
+  console.error(`[server] Startup failed: ${err.message}`);
+  process.exit(1);
 });

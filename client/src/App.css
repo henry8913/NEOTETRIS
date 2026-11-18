@@ -9,6 +9,8 @@
   -webkit-user-select: none;
   touch-action: manipulation;
   position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tetris::before {
@@ -36,6 +38,7 @@
   max-width: 360px;
   justify-content: center;
   flex-wrap: wrap;
+  align-items: flex-start;
   position: relative;
   z-index: 1;
 }
@@ -103,9 +106,42 @@
 }
 
 .preview-cell {
-  width: 11px;
-  height: 11px;
+  width: var(--cell, 11px);
+  height: var(--cell, 11px);
   border-radius: 1px;
+}
+
+.next-piece.dimmed {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+.next-queue {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.next-queue .next-piece {
+  padding: 2px;
+}
+
+/* ── Hold ── */
+.hold-stat {
+  gap: 3px;
+}
+
+.hold-stat .stat-label {
+  margin-bottom: 2px;
+}
+
+.hold-empty {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  border: 1px dashed rgba(0, 240, 255, 0.25);
+  border-radius: 3px;
 }
 
 /* ── Game Area ── */
@@ -361,6 +397,26 @@
   box-shadow: 0 0 15px rgba(255, 0, 170, 0.3);
 }
 
+/* ── Hold / Pause controls ── */
+.ctrl-hold {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  border-color: rgba(57, 255, 20, 0.3);
+  color: var(--neon-green);
+  box-shadow: 0 0 6px rgba(57, 255, 20, 0.05);
+}
+
+.ctrl-hold::before {
+  background: var(--neon-green);
+}
+
+.ctrl-hold:active {
+  border-color: var(--neon-green);
+  box-shadow: 0 0 15px rgba(57, 255, 20, 0.3);
+}
+
 /* ── Speed Indicator ── */
 .speed-indicator {
   font-size: 10px;
@@ -369,6 +425,20 @@
   letter-spacing: 1px;
   position: relative;
   z-index: 1;
+}
+
+/* ── Pause overlay ── */
+.pause-overlay {
+  background: rgba(5, 5, 10, 0.72);
+}
+
+.pause-overlay h2 {
+  font-size: 26px;
+  letter-spacing: 6px;
+}
+
+.pause-overlay .subtitle {
+  margin-bottom: 16px;
 }
 
 /* ── Glitch overlay for game over ── */
@@ -461,6 +531,21 @@
 }
 
 /* ── Media Queries ── */
+@media (max-width: 599px) {
+  /* Hold + the 3-deep queue need the whole bar to stay on a single row. */
+  .top-bar {
+    gap: 6px;
+  }
+  .stat {
+    min-width: 54px;
+    padding: 6px 8px;
+  }
+  .hold-stat,
+  .next-stat {
+    min-width: 0;
+  }
+}
+
 @media (min-width: 600px) {
   .tetris {
     padding: 20px;
@@ -475,6 +560,9 @@
     font-size: 26px;
   }
   .ctrl-wide { width: 168px; }
+  .controls { max-width: 360px; }
+  /* Keep hold + the 3-deep queue on one row next to the stats. */
+  .top-bar { max-width: 440px; }
   .overlay h2 {
     font-size: 38px;
   }
