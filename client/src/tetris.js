@@ -1,6 +1,13 @@
 export const BOARD_ROWS = 20;
 export const BOARD_COLS = 10;
 
+/** Grace period before a grounded piece locks. */
+export const LOCK_DELAY_MS = 500;
+/** Maximum number of lock-delay resets per piece. */
+export const MAX_LOCK_RESETS = 15;
+/** Number of pieces shown in the preview queue. */
+export const NEXT_QUEUE_SIZE = 3;
+
 const PIECE_SHAPES = {
   I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
   O: [[1,1],[1,1]],
@@ -16,6 +23,38 @@ export const PIECE_NAMES = ['I','O','T','S','Z','J','L'];
 export const COLORS = {
   I: '#00f0f0', O: '#f0f000', T: '#a000f0',
   S: '#00f000', Z: '#f00000', J: '#0000f0', L: '#f0a000',
+};
+
+/*
+ * SRS wall kicks.
+ *
+ * The canonical SRS tables are written with y pointing up; the game board uses
+ * screen coordinates (y pointing down), so every y below is the negated
+ * canonical value (`+y` = one cell down, `-y` = one cell up). That keeps the
+ * floor/ceiling kicks on the side they belong to.
+ *
+ * Keys are `from>to` rotation states (0 = spawn, 1 = R, 2 = 180, 3 = L).
+ */
+const KICKS_JLSTZ = {
+  '0>1': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '1>0': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '1>2': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '2>1': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '2>3': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '3>2': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '3>0': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '0>3': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+};
+
+const KICKS_I = {
+  '0>1': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '1>0': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '1>2': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+  '2>1': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '2>3': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '3>2': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '3>0': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '0>3': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
 };
 
 export function createBoard() {
@@ -48,6 +87,36 @@ export function isValid(board, type, x, y, rotation) {
     }
   }
   return true;
+}
+
+/**
+ * Tries to rotate `piece` by 90° (dir = 1) or -90° (dir = -1), walking the SRS
+ * kick table until a position fits. Returns `{ x, y, rotation }` or `null`.
+ * The given piece is never mutated.
+ */
+export function tryRotate(board, piece, dir = 1) {
+  if (!piece) return null;
+  const { type, x, y } = piece;
+  const from = ((piece.rotation % 4) + 4) % 4;
+  const to = (from + (dir > 0 ? 1 : 3)) % 4;
+
+  // O is rotationally symmetric: no kick tests needed.
+  if (type === 'O') return { x, y, rotation: to };
+
+  const table = type === 'I' ? KICKS_I : KICKS_JLSTZ;
+  const kicks = table[`${from}>${to}`] || [[0, 0]];
+  for (const [kx, ky] of kicks) {
+    const nx = x + kx;
+    const ny = y + ky;
+    if (isValid(board, type, nx, ny, to)) return { x: nx, y: ny, rotation: to };
+  }
+  return null;
+}
+
+/** True when the piece cannot move one cell down. */
+export function isResting(board, piece) {
+  if (!piece) return false;
+  return !isValid(board, piece.type, piece.x, piece.y + 1, piece.rotation);
 }
 
 export function lockPiece(board, type, x, y, rotation) {
