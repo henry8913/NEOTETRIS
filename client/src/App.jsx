@@ -1,381 +1,373 @@
-import { useReducer, useEffect, useCallback, useRef } from 'react';
-import {
-  BOARD_ROWS, BOARD_COLS, createBoard, isValid, lockPiece,
-  clearLines, calcScore, generateBag, spawnPosition,
-  ghostY, tickSpeed, getShape, COLORS,
-} from './tetris';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { LOCK_DELAY_MS, MAX_LOCK_RESETS, isResting, tickSpeed } from './tetris.js';
+import { initAll, reduceAll, fxDone } from './fx.js';
+import { initAudio, isMuted, playSound, setMuted } from './sound.js';
+import { press } from './input.js';
+import { useWideLayout } from './layout.js';
+import Background from './components/Background.jsx';
+import { BoardStage, ClearFlash } from './components/Board.jsx';
+import { DropRipple, LevelWash, Shockwave, SweepFx } from './components/Fx.jsx';
+import StatCard from './components/StatCard.jsx';
+import SidePanel from './components/SidePanel.jsx';
+import ControlsRail from './components/ControlsRail.jsx';
+import MobileHud from './components/MobileHud.jsx';
+import TouchControls from './components/TouchControls.jsx';
+import Overlays from './components/Overlays.jsx';
+import Leaderboard from './components/Leaderboard.jsx';
 import './App.css';
 
-function fillBag(bag, idx) {
-  while (bag.length <= idx + 7) bag.push(...generateBag());
-  return bag;
-}
+const CLEAR_SOUNDS = ['clear1', 'clear2', 'clear3', 'clear4'];
 
-function spawn(bag, idx) {
-  const type = bag[idx % bag.length];
-  return { type, ...spawnPosition(type), rotation: 0 };
-}
+/* Keyboard map: every entry claims preventDefault (no page scroll, ever). */
+const KEY_MAP = {
+  ArrowLeft: { action: { type: 'MOVE', dx: -1, dy: 0 }, sound: 'move' },
+  ArrowRight: { action: { type: 'MOVE', dx: 1, dy: 0 }, sound: 'move' },
+  ArrowDown: { action: { type: 'MOVE', dx: 0, dy: 1 }, sound: 'move' },
+  ArrowUp: { action: { type: 'ROTATE', dir: 1 }, sound: 'rotate' },
+  x: { action: { type: 'ROTATE', dir: 1 }, sound: 'rotate' },
+  z: { action: { type: 'ROTATE', dir: -1 }, sound: 'rotate' },
+  Shift: { action: { type: 'HOLD' }, sound: 'hold', once: true },
+  c: { action: { type: 'HOLD' }, sound: 'hold', once: true },
+  p: { action: { type: 'TOGGLE_PAUSE' }, once: true },
+  Escape: { action: { type: 'TOGGLE_PAUSE' }, once: true },
+};
 
-function initialState() {
-  const bag = fillBag([...generateBag()], 0);
-  return {
-    board: createBoard(),
-    piece: spawn(bag, 0),
-    nextType: bag[1],
-    bag,
-    idx: 1,
-    score: 0,
-    level: 1,
-    lines: 0,
-    gameOver: false,
-    started: false,
-  };
-}
+const GAME_KEYS = new Set([...Object.keys(KEY_MAP), 'Enter', ' ']);
 
-function reducer(state, action) {
-  switch (action.type) {
-    case 'START': {
-      const bag = fillBag([...generateBag()], 0);
-      return {
-        board: createBoard(),
-        piece: spawn(bag, 0),
-        nextType: bag[1],
-        bag, idx: 1,
-        score: 0, level: 1, lines: 0,
-        gameOver: false, started: true,
-      };
-    }
-    case 'MOVE': {
-      if (!state.started || state.gameOver || !state.piece) return state;
-      const { dx, dy } = action;
-      let { type, x, y, rotation } = state.piece;
-      let nx = x + dx, ny = y + dy;
-      if (isValid(state.board, type, nx, ny, rotation)) {
-        return { ...state, piece: { ...state.piece, x: nx, y: ny } };
-      }
-      if (dy === 1) return lockReduce(state);
-      return state;
-    }
-    case 'ROTATE': {
-      if (!state.started || state.gameOver || !state.piece) return state;
-      const { type, x, y, rotation } = state.piece;
-      const nr = (rotation + 1) % 4;
-      if (isValid(state.board, type, x, y, nr)) {
-        return { ...state, piece: { ...state.piece, rotation: nr } };
-      }
-      return state;
-    }
-    case 'HARD_DROP': {
-      if (!state.started || state.gameOver || !state.piece) return state;
-      const { type, x, y, rotation } = state.piece;
-      const gy = ghostY(state.board, type, x, y, rotation);
-      const dropped = { ...state.piece, y: gy };
-      return lockReduce({ ...state, piece: dropped });
-    }
-    case 'TICK': {
-      if (!state.started || state.gameOver || !state.piece) return state;
-      const { type, x, y, rotation } = state.piece;
-      if (isValid(state.board, type, x, y + 1, rotation)) {
-        return { ...state, piece: { ...state.piece, y: y + 1 } };
-      }
-      return lockReduce(state);
-    }
-    case 'RESET':
-      return initialState();
-    default:
-      return state;
-  }
-}
+const isTypingTarget = (el) =>
+  Boolean(el) &&
+  (el.isContentEditable === true ||
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
 
-function lockReduce(state) {
-  const { board, piece, bag, idx, score, level, lines } = state;
-  let b = lockPiece(board, piece.type, piece.x, piece.y, piece.rotation);
-  const [cleaned, cleared] = clearLines(b);
-  b = cleaned;
-
-  const newLines = lines + cleared;
-  const newLevel = Math.floor(newLines / 10) + 1;
-  const newScore = score + calcScore(cleared, level);
-
-  const nextIdx = idx + 1;
-  const newBag = fillBag([...bag], nextIdx);
-  const nextPiece = spawn(newBag, idx);
-
-  if (!isValid(b, nextPiece.type, nextPiece.x, nextPiece.y, nextPiece.rotation)) {
-    return { ...state, board: b, piece: null, score: newScore, level: newLevel, lines: newLines, gameOver: true };
-  }
-
-  return {
-    ...state,
-    board: b,
-    piece: nextPiece,
-    nextType: newBag[nextIdx],
-    bag: newBag,
-    idx: nextIdx,
-    score: newScore,
-    level: newLevel,
-    lines: newLines,
-  };
-}
-
-function Cell({ type }) {
-  if (type === 'ghost') {
-    return <div className="cell ghost-cell" />;
-  }
-  const glow = type
-    ? `0 0 6px ${COLORS[type]}40, 0 0 12px ${COLORS[type]}20, inset 0 0 6px ${COLORS[type]}20`
-    : '';
-  return (
-    <div
-      className="cell"
-      style={type ? { backgroundColor: COLORS[type], boxShadow: glow } : {}}
-    />
-  );
-}
-
-function Board({ board, piece }) {
-  const display = board.map(row => [...row]);
-
-  if (piece) {
-    const shape = getShape(piece.type, piece.rotation);
-    for (let r = 0; r < shape.length; r++) {
-      for (let c = 0; c < shape[r].length; c++) {
-        if (!shape[r][c]) continue;
-        const py = piece.y + r;
-        const px = piece.x + c;
-        if (py >= 0 && py < BOARD_ROWS && px >= 0 && px < BOARD_COLS) {
-          display[py][px] = piece.type;
-        }
-      }
-    }
-    const gy = ghostY(board, piece.type, piece.x, piece.y, piece.rotation);
-    const ghostShape = getShape(piece.type, piece.rotation);
-    for (let r = 0; r < ghostShape.length; r++) {
-      for (let c = 0; c < ghostShape[r].length; c++) {
-        if (!ghostShape[r][c]) continue;
-        const py = gy + r, px = piece.x + c;
-        if (py >= 0 && py < BOARD_ROWS && px >= 0 && px < BOARD_COLS) {
-          if (!display[py][px]) display[py][px] = 'ghost';
-        }
-      }
-    }
-  }
-
-  return (
-    <div className="board">
-      {display.map((row, ri) =>
-        row.map((cell, ci) => <Cell key={`${ri}-${ci}`} type={cell} />)
-      )}
-    </div>
-  );
-}
-
-function NextPiece({ type }) {
-  if (!type) return null;
-  const shape = getShape(type, 0);
-  const size = shape.length;
-  return (
-    <div className="next-piece" style={{ gridTemplateColumns: `repeat(${size}, 11px)` }}>
-      {shape.map((row, ri) =>
-        row.map((cell, ci) => (
-          <div
-            key={`${ri}-${ci}`}
-            className="preview-cell"
-            style={cell ? { backgroundColor: COLORS[type] } : {}}
-          />
-        ))
-      )}
-    </div>
-  );
-}
-
-const NEON_COLORS = [
-  'var(--neon-cyan)',
-  'var(--neon-magenta)',
-  'var(--neon-green)',
-  'var(--neon-yellow)',
-  'var(--neon-purple)',
-];
-
-function createParticles() {
-  return Array.from({ length: 22 }, (_, i) => ({
-    id: i,
-    x: `${Math.random() * 100}%`,
-    delay: `${Math.random() * 12}s`,
-    duration: `${10 + Math.random() * 14}s`,
-    size: `${2 + Math.random() * 2.5}px`,
-    color: NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)],
-    drift: `${-30 + Math.random() * 60}px`,
-  }));
-}
-
-function createStreams() {
-  const positions = [1, 3.5, 96.5, 99];
-  return positions.map((left, i) => ({
-    id: i,
-    left: `${left}%`,
-    delay: `${i * 2.5}s`,
-    duration: `${2.5 + Math.random() * 2}s`,
-  }));
-}
-
-const PARTICLES = createParticles();
-const STREAMS = createStreams();
-
-function BackgroundParticles() {
-  return (
-    <div className="bg-particles" aria-hidden="true">
-      {PARTICLES.map((p) => (
-        <span
-          key={p.id}
-          className="particle"
-          style={{
-            '--x': p.x,
-            '--delay': p.delay,
-            '--duration': p.duration,
-            '--size': p.size,
-            '--color': p.color,
-            '--drift': p.drift,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function DataStreams() {
-  return (
-    <div className="data-streams" aria-hidden="true">
-      {STREAMS.map((s) => (
-        <div
-          key={s.id}
-          className="data-stream"
-          style={{
-            '--left': s.left,
-            '--delay': s.delay,
-            '--duration': s.duration,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
+/**
+ * A focused control owns Enter/Space: the browser turns the key into a `click`
+ * on the button, and stealing it would make every focusable control (HOLD,
+ * MUTE, the rail buttons, the overlays) unreachable from the keyboard.
+ */
+const isInteractiveTarget = (el) =>
+  Boolean(el) &&
+  (el.isContentEditable === true ||
+    ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName) ||
+    (typeof el.closest === 'function' && el.closest('button, a, [role="button"]') !== null));
 
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, null, initialState);
-  const tickRef = useRef(null);
+  const [state, dispatch] = useReducer(reduceAll, null, initAll);
+  const {
+    started, gameOver, paused, board, piece, lockResets, level, lines,
+    score, combo, holdType, canHold, nextQueue, lastClear, fx,
+  } = state;
 
-  const speed = state.started && !state.gameOver ? tickSpeed(state.level) : null;
+  const [muted, setMutedState] = useState(isMuted);
+  const history = useRef({ clearId: 0, level: 1, gameOver: false, started: false });
+  // Desktop / landscape phones get the three-column shell, everything else the
+  // compact one. Only the active composition is mounted (no hidden buttons).
+  const wide = useWideLayout();
 
-  useEffect(() => {
-    if (speed === null) {
-      clearInterval(tickRef.current);
-      return;
+  // Rankings modal + the run counter that remounts the game-over form.
+  const [rankingsOpen, setRankingsOpen] = useState(false);
+  const [runId, setRunId] = useState(0);
+  const [highlightId, setHighlightId] = useState(null);
+
+  const start = useCallback(() => {
+    // A fresh Overlays (and therefore a fresh save form) for every run.
+    setRunId((id) => id + 1);
+    setRankingsOpen(false);
+    dispatch({ type: 'START' });
+  }, []);
+  const resume = useCallback(() => dispatch({ type: 'TOGGLE_PAUSE' }), []);
+  const openRankings = useCallback(() => {
+    setRankingsOpen(true);
+    // Reading the board mid-run must not cost the run: pause the game behind
+    // the dialog. The start / game-over screens dispatch nothing.
+    if (started && !gameOver && !paused) dispatch({ type: 'TOGGLE_PAUSE' });
+  }, [started, gameOver, paused]);
+  const closeRankings = useCallback(() => setRankingsOpen(false), []);
+  const handleSaved = useCallback((entry) => {
+    setHighlightId(entry?.id ?? null);
+  }, []);
+  const done = useCallback((key) => dispatch(fxDone(key)), []);
+  const holdPiece = useCallback(() => press(dispatch, { type: 'HOLD' }, 'hold'), []);
+  const mutedToggle = useCallback(() => {
+    const next = !muted;
+    setMutedState(next);
+    setMuted(next);
+    if (!next) {
+      initAudio();
+      playSound('ui-click');
     }
-    clearInterval(tickRef.current);
-    tickRef.current = setInterval(() => dispatch({ type: 'TICK' }), speed);
-    return () => clearInterval(tickRef.current);
-  }, [speed]);
+  }, [muted]);
 
+  // Unlock WebAudio on the first real gesture (never at load time).
   useEffect(() => {
-    if (state.gameOver) clearInterval(tickRef.current);
-  }, [state.gameOver]);
+    const unlock = () => initAudio();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  // Gravity: only runs while the game is live and not paused.
+  useEffect(() => {
+    if (!started || gameOver || paused) return undefined;
+    const id = setInterval(() => dispatch({ type: 'TICK' }), tickSpeed(level));
+    return () => clearInterval(id);
+  }, [started, gameOver, paused, level]);
+
+  // Lock delay: a grounded piece locks after LOCK_DELAY_MS. Every successful
+  // grounded move/rotation restarts the timer (bounded by MAX_LOCK_RESETS);
+  // once the budget is spent the lock is immediate.
+  useEffect(() => {
+    if (!started || gameOver || paused || !piece) return undefined;
+    if (!isResting(board, piece)) return undefined;
+    if (lockResets >= MAX_LOCK_RESETS) {
+      dispatch({ type: 'LOCK' });
+      return undefined;
+    }
+    const id = setTimeout(() => dispatch({ type: 'LOCK' }), LOCK_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [started, gameOver, paused, board, piece, lockResets]);
+
+  // Audio only: every sound is inferred from a change of the pure game state.
+  useEffect(() => {
+    const before = history.current;
+
+    if (started && lastClear.id > before.clearId) {
+      if (lastClear.count > 0) {
+        // Perfect and TETRIS get their own signature, the rest keep the ladder.
+        if (lastClear.perfect) playSound('perfect');
+        else if (lastClear.count >= 4) playSound('tetris');
+        else playSound(CLEAR_SOUNDS[Math.min(lastClear.count, 4) - 1]);
+      } else {
+        playSound('lock');
+      }
+    }
+    if (started && level > before.level) playSound('levelup');
+    if (gameOver && !before.gameOver) playSound('gameover');
+    if (started && !before.started) playSound('start');
+
+    history.current = { clearId: lastClear.id, level, gameOver, started };
+  }, [started, gameOver, level, lastClear]);
+
+  /*
+   * Level intensity for the ambient layer. Written straight to the document
+   * element (no state, no render) so the body grid can pick it up too; capped
+   * at 10 so high levels never become a strobe. The playfield reads the same
+   * value from its inline `--level`.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--level', String(Math.min(Math.max(level, 1), 10)));
+    return () => root.style.removeProperty('--level');
+  }, [level]);
 
   const onKeyDown = useCallback((e) => {
-    if (!state.started) {
-      if (e.key === 'Enter') dispatch({ type: 'START' });
+    if (isTypingTarget(e.target)) return;
+    // While the rankings dialog is open it owns the keyboard: Esc closes it
+    // (handled there), and no game key may reach the board behind it.
+    if (rankingsOpen) return;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    initAudio();
+
+    // A focused control keeps Enter/Space: let the browser fire the `click`.
+    if ((key === 'Enter' || key === ' ') && isInteractiveTarget(e.target)) return;
+
+    // Claim the game keys first: Space/arrows must never scroll the page, not
+    // even on the start screen or after a game over.
+    if (GAME_KEYS.has(key)) e.preventDefault();
+
+    if (key === 'm') {
+      if (!e.repeat) mutedToggle();
       return;
     }
-    if (state.gameOver) {
-      if (e.key === 'Enter') dispatch({ type: 'START' });
+
+    if (key === 'Enter' || key === ' ') {
+      // Start screen: Enter / Space start the run (through the same callback
+      // as the INITIALIZE button, so the run key and the modal agree).
+      if (!started) {
+        if (!e.repeat) start();
+        return;
+      }
+      // Game over: restarting belongs to REBOOT (or Enter on it). A stray
+      // Enter/Space must never wipe the save form the player is filling in.
+      if (gameOver) return;
+      if (key === ' ' && !e.repeat) {
+        dispatch({ type: 'FX_SHAKE', kind: 'light' });
+        dispatch({ type: 'HARD_DROP' });
+      }
       return;
     }
-    switch (e.key) {
-      case 'ArrowLeft': e.preventDefault(); dispatch({ type: 'MOVE', dx: -1, dy: 0 }); break;
-      case 'ArrowRight': e.preventDefault(); dispatch({ type: 'MOVE', dx: 1, dy: 0 }); break;
-      case 'ArrowDown': e.preventDefault(); dispatch({ type: 'MOVE', dx: 0, dy: 1 }); break;
-      case 'ArrowUp': e.preventDefault(); dispatch({ type: 'ROTATE' }); break;
-      case ' ': e.preventDefault(); dispatch({ type: 'HARD_DROP' }); break;
-    }
-  }, [state.started, state.gameOver]);
+    if (!started || gameOver) return;
+
+    const hit = KEY_MAP[key];
+    if (!hit || (hit.once && e.repeat)) return;
+    if (hit.sound) playSound(hit.sound);
+    dispatch(hit.action);
+  }, [started, gameOver, mutedToggle, rankingsOpen, start]);
 
   useEffect(() => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onKeyDown]);
 
-  const act = useCallback((type, payload) => () => dispatch({ type, ...payload }), []);
-  const tap = useCallback((type, payload) => (e) => {
-    e.preventDefault();
-    dispatch({ type, ...payload });
-  }, []);
+  const endShake = useCallback((e) => {
+    if (e.target === e.currentTarget) done('shake');
+  }, [done]);
 
-  const level = state.level;
-  const speedMs = tickSpeed(level);
+  const idle = !started || gameOver;
+  // Hold is a real button in both compositions: disabled while the rules would
+  // ignore it (start screen, game over, paused).
+  const holdDisabled = idle || paused;
+
+  /* The playfield is identical in both compositions; only its grid cell moves. */
+  const stage = (
+    <div className="board-wrapper">
+      <BoardStage board={board} piece={started ? piece : null}>
+        {fx.intro && <SweepFx key={`sweep-${fx.intro.id}`} onDone={() => done('intro')} />}
+
+        {fx.drop && (
+          <DropRipple
+            key={`drop-${fx.drop.id}`}
+            x={fx.drop.x}
+            y={fx.drop.y}
+            color={fx.drop.color}
+            onDone={() => done('drop')}
+          />
+        )}
+
+        {combo >= 2 && (
+          <div
+            className="combo-badge"
+            key={combo}
+            style={{ '--combo': Math.min(combo, 8) }}
+            aria-hidden="true"
+          >
+            <span className="combo-badge__main">×{combo}</span>
+            {combo >= 4 && (
+              <span className="combo-badge__sub">{combo >= 6 ? 'Unstoppable' : 'On fire'}</span>
+            )}
+          </div>
+        )}
+
+        {fx.flash && (
+          <ClearFlash
+            key={fx.flash.id}
+            count={fx.flash.count}
+            rows={fx.flash.rows}
+            colors={fx.flash.colors}
+            perfect={fx.flash.perfect}
+            onDone={() => done('flash')}
+          />
+        )}
+
+        <Overlays
+          key={`run-${runId}`}
+          started={started}
+          paused={paused}
+          gameOver={gameOver}
+          score={score}
+          level={level}
+          lines={lines}
+          onStart={start}
+          onResume={resume}
+          onRankings={openRankings}
+          onSaved={handleSaved}
+        />
+      </BoardStage>
+    </div>
+  );
 
   return (
-    <div className="tetris">
-      <DataStreams />
-      <BackgroundParticles />
-      <header className="top-bar">
-        <div className="stat"><span className="stat-label">Score</span><span className="stat-value">{state.score}</span></div>
-        <div className="stat"><span className="stat-label">Level</span><span className="stat-value">{state.level}</span></div>
-        <div className="stat"><span className="stat-label">Lines</span><span className="stat-value">{state.lines}</span></div>
-        <div className="stat next-stat">
-          <span className="stat-label">Next</span>
-          <NextPiece type={state.nextType} />
-        </div>
-      </header>
+    <div
+      className={`tetris${fx.shake ? ` shake-${fx.shake.kind}` : ''}${fx.intro ? ' is-intro' : ''}${
+        gameOver ? ' is-over' : ''
+      }`}
+      style={{ '--level': Math.min(Math.max(level, 1), 10) }}
+      onAnimationEnd={endShake}
+    >
+      <Background />
 
-      <div className="game-area">
-        <div className="board-wrapper">
-          {!state.started && (
-            <div className="overlay">
-              <h2>NEOTETRIS</h2>
-              <p className="subtitle">// 2084 //</p>
-              <button className="btn" onClick={act('START')}>Initialize</button>
-            </div>
-          )}
-          {state.gameOver && (
-            <div className="overlay game-over-overlay">
-              <h2>System Halted</h2>
-              <p className="final-score">{state.score}</p>
-              <div className="game-over-stats">
-                <div className="game-over-stat">
-                  <span className="stat-label">Level</span>
-                  <span className="stat-value">{state.level}</span>
-                </div>
-                <div className="game-over-stat">
-                  <span className="stat-label">Lines</span>
-                  <span className="stat-value">{state.lines}</span>
-                </div>
-              </div>
-              <button className="btn" onClick={act('START')}>Reboot</button>
-            </div>
-          )}
-          <Board board={state.board} piece={state.piece} />
-        </div>
-      </div>
+      {wide ? (
+        <main className="game-area game-area--wide">
+          <header className="top-bar">
+            <StatCard label="Score" value={score} live animated />
+            <StatCard label="Level" value={level} />
+            <StatCard label="Lines" value={lines} />
+          </header>
 
-      {state.started && !state.gameOver && (
-        <div className="controls">
-          <div className="ctrl-row">
-            <button className="ctrl-btn" onTouchStart={tap('MOVE', { dx: -1, dy: 0 })} onMouseDown={act('MOVE', { dx: -1, dy: 0 })}>◀</button>
-            <button className="ctrl-btn" onTouchStart={tap('ROTATE')} onMouseDown={act('ROTATE')}>↻</button>
-            <button className="ctrl-btn" onTouchStart={tap('MOVE', { dx: 1, dy: 0 })} onMouseDown={act('MOVE', { dx: 1, dy: 0 })}>▶</button>
+          <div className="rail rail-left">
+            <ControlsRail dispatch={dispatch} disabled={idle} paused={paused} />
           </div>
-          <div className="ctrl-row">
-            <button className="ctrl-btn" onTouchStart={tap('MOVE', { dx: 0, dy: 1 })} onMouseDown={act('MOVE', { dx: 0, dy: 1 })}>▼</button>
-            <button className="ctrl-btn ctrl-wide" onTouchStart={tap('HARD_DROP')} onMouseDown={act('HARD_DROP')}>DROP</button>
+
+          {stage}
+
+          <div className="rail rail-right">
+            <SidePanel
+              holdType={holdType}
+              canHold={canHold}
+              nextQueue={nextQueue}
+              muted={muted}
+              score={score}
+              level={level}
+              lines={lines}
+              onToggleMute={mutedToggle}
+              onHold={holdPiece}
+              onRankings={openRankings}
+              disabled={holdDisabled}
+              speedMs={tickSpeed(level)}
+            />
           </div>
+        </main>
+      ) : (
+        <>
+          <MobileHud
+            score={score}
+            level={level}
+            lines={lines}
+            holdType={holdType}
+            canHold={canHold}
+            nextQueue={nextQueue}
+            muted={muted}
+            onToggleMute={mutedToggle}
+            onHold={holdPiece}
+            disabled={holdDisabled}
+          />
+
+          <main className="game-area">{stage}</main>
+
+          <footer className="dock">
+            <TouchControls dispatch={dispatch} disabled={idle} paused={paused} />
+          </footer>
+        </>
+      )}
+
+      {fx.banner && (
+        <div
+          className="level-banner"
+          key={fx.banner.id}
+          aria-hidden="true"
+          onAnimationEnd={() => done('banner')}
+        >
+          Level {fx.banner.level}
         </div>
       )}
 
-      {state.started && (
-        <div className="speed-indicator">
-          Speed: {speedMs}ms | Level {state.level}
-        </div>
+      {fx.wash && <LevelWash key={`wash-${fx.wash.id}`} onDone={() => done('wash')} />}
+
+      {fx.shock && (
+        <Shockwave
+          key={`shock-${fx.shock.id}`}
+          perfect={fx.shock.perfect}
+          onDone={() => done('shock')}
+        />
       )}
+
+      {fx.intro && (
+        <span key={`flash-${fx.intro.id}`} className="fx-start" aria-hidden="true" />
+      )}
+
+      <Leaderboard open={rankingsOpen} onClose={closeRankings} highlightId={highlightId} />
     </div>
   );
 }

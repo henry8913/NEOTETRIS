@@ -29,7 +29,7 @@
   --bg-secondary: #0a0a1a;
   --bg-tertiary: #111128;
   --text-primary: #d0d0e0;
-  --text-dim: #606080;
+  --text-dim: #7a7aa0;
   --border-glow: rgba(0, 240, 255, 0.3);
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -40,18 +40,45 @@
   box-sizing: border-box;
 }
 
-body {
+/*
+ * The game must never scroll: the viewport is the board. Every ancestor is
+ * locked to the visible size and clipping is disabled down the tree, so a
+ * stray pixel can never produce a scrollbar (the reported 959 > 706 bug).
+ */
+html,
+body,
+#root {
+  height: 100%;
+  max-height: 100%;
   margin: 0;
   overflow: hidden;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+body {
   position: fixed;
+  inset: 0;
   width: 100%;
   height: 100%;
+  overscroll-behavior: none;
   background:
     linear-gradient(0deg, rgba(0, 240, 255, 0.02) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 240, 255, 0.02) 1px, transparent 1px),
     var(--bg-primary);
-  background-size: 60px 60px, 60px 60px;
-  animation: grid-scroll 12s linear infinite;
+  /* The ambient grid tightens and scrolls a little faster with the level
+     (1 → 10, capped). `--level` is written on <html> by App. */
+  background-size:
+    calc(60px - (min(var(--level, 1), 10) - 1) * 2px)
+    calc(60px - (min(var(--level, 1), 10) - 1) * 2px),
+    calc(60px - (min(var(--level, 1), 10) - 1) * 2px)
+    calc(60px - (min(var(--level, 1), 10) - 1) * 2px);
+  animation: grid-scroll linear infinite;
+  animation-duration: calc(12s - (min(var(--level, 1), 10) - 1) * 0.55s);
 }
 
 body::after {
@@ -71,9 +98,16 @@ body::after {
 }
 
 #root {
+  position: relative;
   width: 100%;
-  height: 100dvh;
-  display: flex;
-  justify-content: center;
+  height: 100%;
+  max-height: 100%;
+  display: block;
+  overflow: hidden;
   animation: flicker 0.15s infinite;
+}
+
+:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 2px;
 }
