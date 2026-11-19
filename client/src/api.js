@@ -133,11 +133,15 @@ export async function fetchScores(limit = 10, { timeout = 5000, signal } = {}) {
 }
 
 /**
- * `POST /api/scores` → the created score. The server error body
+ * `POST /api/scores` → the created (or replayed) score. The server error body
  * (`{ error, details }`) is surfaced on the thrown `Error`, and a 429 also
  * carries `retryAfter` (seconds) when the header is present.
+ *
+ * `key` is the run's idempotency key: the same key twice answers with the
+ * existing row (200) instead of inserting a second one (201). Both are success
+ * here — the caller only cares about the row it gets back.
  */
-export async function submitScore({ name, score, level, lines } = {}, { timeout = 5000 } = {}) {
+export async function submitScore({ name, score, level, lines, key } = {}, { timeout = 5000 } = {}) {
   const timer = withTimeout(timeout);
 
   const payload = {
@@ -146,6 +150,10 @@ export async function submitScore({ name, score, level, lines } = {}, { timeout 
     level: Number.isFinite(Number(level)) ? Math.max(1, Math.trunc(Number(level))) : 1,
     lines: Number.isFinite(Number(lines)) ? Math.max(0, Math.trunc(Number(lines))) : 0,
   };
+
+  // Forwarded untouched and only when present: the caller owns the key (one per
+  // run, reused by every retry), and "no key" keeps the plain-insert contract.
+  if (typeof key === 'string' && key) payload.key = key;
 
   try {
     const response = await fetch(`${API_BASE}${SELECTOR}`, {
@@ -157,6 +165,8 @@ export async function submitScore({ name, score, level, lines } = {}, { timeout 
 
     const body = await readJSON(response);
 
+    // 201 (created) and 200 (idempotent replay of the same key) are both a
+    // success: the body is the row either way.
     if (!response.ok) {
       const message = body && typeof body.error === 'string' && body.error
         ? body.error

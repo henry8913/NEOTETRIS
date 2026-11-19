@@ -7,6 +7,7 @@ import {
   createStore,
   MAX_LIMIT,
   MAX_MEMORY_SCORES,
+  scoreSchema,
 } from '../src/store.js';
 
 const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -27,8 +28,14 @@ test('memory store starts empty and reports its status', async () => {
 test('memory store adds scores with a uniform public shape', async () => {
   const store = createMemoryStore();
 
-  const created = await store.addScore({ name: 'Ada', score: 100, level: 2, lines: 7 });
+  const { row: created, created: isNew } = await store.addScore({
+    name: 'Ada',
+    score: 100,
+    level: 2,
+    lines: 7,
+  });
 
+  assert.equal(isNew, true);
   assert.deepEqual(Object.keys(created).sort(), ['date', 'id', 'level', 'lines', 'name', 'score']);
   assert.equal(created._id, undefined);
   assert.equal(created.__v, undefined);
@@ -57,8 +64,8 @@ test('memory store keeps scores ordered by score desc', async () => {
 test('memory store breaks score ties by date ascending', async () => {
   const store = createMemoryStore();
 
-  const first = await store.addScore(makeScore(1, 100));
-  const second = await store.addScore(makeScore(2, 100));
+  const { row: first } = await store.addScore(makeScore(1, 100));
+  const { row: second } = await store.addScore(makeScore(2, 100));
 
   const scores = await store.listScores();
   assert.deepEqual(scores.map((score) => score.id), [first.id, second.id]);
@@ -142,6 +149,78 @@ test('listScores returns copies (mutating results does not corrupt the store)', 
   assert.equal(fresh.score, 10);
 });
 
+test('memory store dedupes a repeated idempotency key', async () => {
+  const store = createMemoryStore();
+  const payload = { name: 'Ada', score: 4200, level: 4, lines: 33, key: 'run-abc_123' };
+
+  const first = await store.addScore(payload);
+  const second = await store.addScore(payload);
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.deepEqual(second.row, first.row, 'same id, same date, same fields');
+  assert.equal(store.size, 1);
+  assert.equal(second.row.key, undefined);
+  assert.deepEqual(Object.keys(second.row).sort(), [
+    'date',
+    'id',
+    'level',
+    'lines',
+    'name',
+    'score',
+  ]);
+});
+
+test('memory store dedupes by key, not by content', async () => {
+  const store = createMemoryStore();
+  const base = { name: 'Ada', score: 100, level: 1, lines: 0 };
+
+  await store.addScore({ ...base, key: 'key-aaaaaaaa' });
+  await store.addScore({ ...base, key: 'key-bbbbbbbb' });
+
+  assert.equal(store.size, 2);
+});
+
+test('memory store inserts every time when no key is given', async () => {
+  const store = createMemoryStore();
+  const payload = { name: 'Ada', score: 100, level: 1, lines: 0 };
+
+  const first = await store.addScore(payload);
+  const second = await store.addScore(payload);
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, true);
+  assert.notEqual(first.row.id, second.row.id);
+  assert.equal(store.size, 2);
+});
+
+test('memory store forgets keys whose row was evicted by the cap', async () => {
+  const store = createMemoryStore({ max: 1 });
+
+  await store.addScore({ name: 'low', score: 1, level: 1, lines: 0, key: 'evicted-key' });
+  await store.addScore({ name: 'high', score: 900, level: 1, lines: 0 });
+
+  assert.equal(store.size, 1);
+
+  const retried = await store.addScore({
+    name: 'low',
+    score: 1,
+    level: 1,
+    lines: 0,
+    key: 'evicted-key',
+  });
+
+  assert.equal(retried.created, true, 'the guarded row is gone, so a re-run is a new insert');
+});
+
+test('score schema declares a unique sparse index on key', () => {
+  const keyIndex = scoreSchema.indexes().find(([fields]) => fields.key === 1);
+
+  assert.ok(keyIndex, 'key index is declared');
+  assert.equal(keyIndex[1].unique, true);
+  assert.equal(keyIndex[1].sparse, true, 'legacy rows without a key stay unindexed');
+});
+
 test('createStore without a mongoUri goes straight to memory', async () => {
   const logs = [];
   const logger = { log: (line) => logs.push(line), warn: (line) => logs.push(line) };
@@ -167,7 +246,7 @@ test('createStore falls back to memory when MongoDB is unreachable', async () =>
   assert.equal(store.getStatus(), 'memory');
   assert.ok(logs.some((line) => line.includes('MongoDB unavailable')));
 
-  const created = await store.addScore({ name: 'Ada', score: 1, level: 1, lines: 0 });
+  const { row: created } = await store.addScore({ name: 'Ada', score: 1, level: 1, lines: 0 });
   assert.equal(created.name, 'Ada');
 
   await store.close();

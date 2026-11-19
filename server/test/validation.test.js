@@ -6,6 +6,9 @@ import {
   sanitizeName,
   DEFAULT_LINES,
   DEFAULT_LEVEL,
+  KEY_ERROR_MESSAGE,
+  KEY_MAX_LENGTH,
+  KEY_MIN_LENGTH,
   MAX_NAME_LENGTH,
   MAX_SCORE,
 } from '../src/validation.js';
@@ -125,6 +128,55 @@ test('extra fields are ignored', () => {
 
   assert.equal(result.ok, true);
   assert.deepEqual(Object.keys(result.value).sort(), ['level', 'lines', 'name', 'score']);
+});
+
+test('a valid idempotency key is passed through', () => {
+  const key = 'run_2026-11-19T10-00-00Z-abc';
+  const result = validateScorePayload({ score: 10, key });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.key, key);
+});
+
+test('key length boundaries are inclusive', () => {
+  const short = 'a'.repeat(KEY_MIN_LENGTH);
+  const long = 'a'.repeat(KEY_MAX_LENGTH);
+
+  assert.equal(validateScorePayload({ score: 1, key: short }).value.key, short);
+  assert.equal(validateScorePayload({ score: 1, key: long }).value.key, long);
+});
+
+test('key is absent from the value when the client does not send one', () => {
+  const result = validateScorePayload({ score: 10 });
+
+  assert.equal(result.ok, true);
+  assert.equal(Object.hasOwn(result.value, 'key'), false);
+});
+
+test('invalid idempotency keys are rejected with a strict message', () => {
+  for (const key of ['ab', 'has spaces', 'x'.repeat(KEY_MAX_LENGTH + 1), 123, true, ['key']]) {
+    const result = validateScorePayload({ score: 1, key });
+
+    assert.equal(result.ok, false, `key ${JSON.stringify(key)} should be rejected`);
+    assert.deepEqual(result.errors, [{ field: 'key', message: KEY_ERROR_MESSAGE }]);
+  }
+});
+
+test('key errors are reported together with the other field errors', () => {
+  const result = validateScorePayload({ score: -1, key: 'nope' });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.errors.map((error) => error.field).sort(),
+    ['key', 'score'],
+  );
+});
+
+test('a null key is treated as absent (no idempotency)', () => {
+  const result = validateScorePayload({ score: 1, key: null });
+
+  assert.equal(result.ok, true);
+  assert.equal(Object.hasOwn(result.value, 'key'), false);
 });
 
 test('non-object bodies are treated as empty payloads', () => {

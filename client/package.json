@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test src/tetris.test.js src/game.test.js src/leaderboard.test.js src/joystick.test.js src/sound.test.js",
+    "test": "node --test src/tetris.test.js src/game.test.js src/leaderboard.test.js src/joystick.test.js src/sound.test.js src/runKey.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

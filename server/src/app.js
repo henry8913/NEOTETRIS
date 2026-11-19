@@ -137,8 +137,9 @@ export function createApp({
         return res.status(400).json({ error: 'Invalid payload', details: result.errors });
       }
 
-      const created = await store.addScore(result.value);
-      return res.status(201).json(created);
+      // 200 = the idempotency key was already known, 201 = a new row.
+      const { row, created } = await store.addScore(result.value);
+      return res.status(created ? 201 : 200).json(row);
     } catch (err) {
       return next(err);
     }

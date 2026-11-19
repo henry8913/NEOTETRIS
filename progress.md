@@ -16,7 +16,7 @@
 - **Cache**: `scoreCache.js` — board merged in memoria per tab, TTL 30s, invalidata dopo un salvataggio o su REFRESH/RETRY
 - **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~375 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, stato della modale rankings, due composizioni di layout
 - **Rendering**: `components/` (`Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Joystick`, `TouchControls`, `Overlays`, `Leaderboard`, `Background`, `Fx`, `StatCard`, `pieces`); stili in `App.css` + `index.css` (no framework CSS)
-- **Test**: `node:test` in entrambi i package, nessun framework — **66 test client** (13 tetris + 22 game + 15 leaderboard + 13 joystick + 3 sound), **44 test server**
+- **Test**: `node:test` in entrambi i package, nessun framework — **75 test client** (13 tetris + 22 game + 15 leaderboard + 13 joystick + 3 sound + 9 runKey), **44 test server**
 - **Backend** modulare: `app.js` (factory `createApp`, montabile nei test senza `listen`), `store.js` (store memoria/Mongo con fallback automatico), `validation.js` (payload score), `index.js` (entry sottile con graceful shutdown)
 - **Store**: Mongo opzionale, timeout 3s → store in memoria; risposta API sempre `{ id, name, score, level, lines, date }` (mai `_id`/`__v`)
 - **Leaderboard end-to-end**: game over → best locale → form nome → `POST /api/scores` → rank; modale Top 10 con badge SERVER/LOCAL e fallback offline
@@ -113,11 +113,21 @@
 - Misure: 390×844 joy **198.4 × 329.1**, pad **143.6 × 120** (HOLD/PAUSE **67.8 × 56**), board **374 × 748**, scroll **844/844**; 320×568 joy **119.6 × 219.5**, pad **97.9 × 120** (HOLD/PAUSE **44.9 × 56**), board **249.5 × 499**, scroll **568/568**
 - Test: **66 client**, lint pulito, build ok
 
+### Round 9 — Salvataggio una volta sola + pad più trasparente ✅
+- **Save-once**: dopo un salvataggio confermato il form sparisce per quella run e al suo posto c'è un blocco read-only (`SAVED AS <NOME>` + `RANK #N`, o `ON THE BOARD` se il rank non è calcolabile) con `RANKINGS` / `REBOOT`; l'unico modo per rivedere il form è `REBOOT`, che rimonta `Overlays` (`key={run-${runId}}`) — nessun altro reset
+- **Rankings automatico**: `onSaved(created)` (highlight) e subito dopo `onRankings()`, nello stesso batch, quindi la modale si apre già con la riga nuova evidenziata; la run è finita, quindi niente `TOGGLE_PAUSE` (verificato: nessun `.pause-overlay`)
+- **Terminale per la run**: `savedRef` + `busyRef` rendono `saved` definitivo (un secondo Enter, un click sintetico o un doppio tap non rifanno la POST); `aliveRef` impedisce che una risposta arrivata dopo `REBOOT` apra la modale sopra la run nuova
+- **Idempotenza**: `runKey.js` (`makeRunKey`) genera **una** chiave per run (`crypto.randomUUID()`, altrimenti timestamp + random a 32 bit), tenuta in un ref e reinviata **anche dal RETRY**: la POST che era andata in timeout dopo l'insert ora torna 200 con la riga esistente invece di duplicarla. Contratto server rispettato in entrambi i rami: 8–64 caratteri `[A-Za-z0-9_-]` (uuid sanificato, fallback con salt a 7 cifre zero-padded) — una chiave rifiutata con 400 avrebbe spinto una run valida nel percorso locale
+- **Offline invariato**: la POST fallita lascia `SAVED LOCALLY` + `RETRY` e non naviga (la regola one-shot vale solo per un salvataggio confermato); copia provvisoria locale (`provisionalRef`/`removeLocalScore`) intatta
+- **Pad più trasparente**: `.action-btn` da `rgba(8,10,26,0.4)` a **0.22** (DROP 0.26 sopra il gradiente magenta 0.14), bordi a **0.35** alpha (DROP 0.40, PAUSA 0.35, PLAY 0.35), `text-shadow` a due strati (ombra 0.95 + alone nel colore d'accento), inset scuro ridotto a 0.16; `[data-pressed]`/`:active` restano ≥0.45 (**0.48**, DROP 0.50) con `transition: none`, nessun `backdrop-filter`/`filter`, misure invariate (HOLD/PAUSE 68×56, DROP 144×56 a 390×844)
+- Verifiche headless (Chromium 390×844): save → modale con riga `is-highlight`, form assente, conferma `SAVED AS NEO RANK #2`; RETRY → 2 POST con la **stessa** chiave valida; REBOOT → form pulito con il nome ricordato; computed styles del pad come sopra
+- Test: `runKey.test.js` (9) → **75 client**, lint pulito, build **242.25 kB JS (76.21 kB gzip) / 45.17 kB CSS (9.74 kB gzip)**
+
 ### Verifica finale
-- `npm test --prefix client` → 66/66
+- `npm test --prefix client` → 75/75
 - `npm test --prefix server` → 44/44
 - `npm run lint --prefix client` → nessun errore
-- `npm run build --prefix client` → build ok (**240.21 kB JS / 43.80 kB CSS**)
+- `npm run build --prefix client` → build ok (**242.25 kB JS / 45.17 kB CSS**)
 
 ## Layout
 
@@ -142,8 +152,8 @@
 
 ## Leaderboard
 
-- **End-to-end**: a game over il best locale viene scritto subito (`neotetris.best`), poi il form nome (precompilato con `neotetris.player`) invia `POST /api/scores`; in caso di successo la riga creata viene salvata in locale e si chiede `GET /api/scores?limit=50` per calcolare `SAVED · RANK #N`
-- **Offline**: se il POST fallisce (rete, timeout, 429, 400) la run resta in `neotetris.scores` con id `local-…`; la UI mostra `SAVED LOCALLY` e `RETRY` rispedisce al server, sostituendo la copia provvisoria
+- **End-to-end**: a game over il best locale viene scritto subito (`neotetris.best`), poi il form nome (precompilato con `neotetris.player`) invia `POST /api/scores` con la chiave idempotente della run; in caso di successo la riga creata viene salvata in locale, si chiede `GET /api/scores?limit=50` per calcolare il rank, il form diventa la conferma read-only e la modale rankings si apre da sola con la riga evidenziata
+- **Offline**: se il POST fallisce (rete, timeout, 429, 400) la run resta in `neotetris.scores` con id `local-…`; la UI mostra `SAVED LOCALLY` e `RETRY` rispedisce al server **con la stessa chiave** (una POST andata in timeout dopo l'insert torna 200 con la riga esistente), sostituendo la copia provvisoria
 - **Modale**: Top 10 con `mergeScores(server, local)`, badge `SERVER`/`LOCAL`, skeleton, stati vuoto/errore, RETRY/REFRESH; se il server non risponde si usa `fetchHealth()` per distinguere "offline" da "server in errore"
 - **Cache**: board merged in memoria per 30s (`CACHE_TTL_MS`), invalidata dopo un salvataggio e dai pulsanti di refresh
 - **Accessibilità**: `role="dialog"` + `aria-modal`, focus iniziale su CLOSE, Tab trap, Esc/backdrop per chiudere, focus restituito all'elemento che l'ha aperta; apertura in partita → `TOGGLE_PAUSE`

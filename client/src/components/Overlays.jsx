@@ -12,6 +12,7 @@ import {
   saveName,
 } from '../storage.js';
 import { invalidateScoreCache } from '../scoreCache.js';
+import { makeRunKey } from '../runKey.js';
 
 /**
  * The three full-board overlays. They are absolutely positioned inside
@@ -28,12 +29,16 @@ import { invalidateScoreCache } from '../scoreCache.js';
  * noise — and clipped on the narrowest boards.
  *
  * Save flow:
- *   idle → saving → saved        (server accepted it)
+ *   idle → saving → saved        (the server accepted it — terminal)
  *                ↘ error         (offline / rate limit: the run is stored
  *                                locally, RETRY goes back to the server)
- * The form state lives here and is reset by remounting the component on every
- * START (App passes a run key), so a new run can never inherit the previous
- * "saved" state.
+ * A confirmed save replaces the form with a read-only confirmation and opens
+ * the rankings modal, so one run is saved exactly once; REBOOT is the only way
+ * back to a form (the component is remounted per run by App's `key`).
+ *
+ * Every attempt carries the same idempotency key (`runKey.js`): a POST that
+ * timed out after the insert answers with the existing row instead of adding a
+ * second one.
  */
 
 function describeError(error) {
@@ -64,12 +69,27 @@ export default function Overlays({
   const [saveRank, setSaveRank] = useState(null);
   const [saveError, setSaveError] = useState('');
   const [localOnly, setLocalOnly] = useState(false);
+  const [savedName, setSavedName] = useState('');
   // The best carries over from the previous run: Overlays is remounted on START.
   const [best] = useState(() => loadBest());
 
   const inputRef = useRef(null);
   const busyRef = useRef(false);
   const provisionalRef = useRef(null);
+  // Terminal latch + the one idempotency key of this run. Both survive every
+  // re-render, and a remount (REBOOT) is what clears them.
+  const savedRef = useRef(false);
+  const keyRef = useRef('');
+  // REBOOT can be pressed while a POST is still in flight: from then on the
+  // component is gone and must not open the modal over the new run.
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const record = isRecord(score, best);
   const bestScore = Math.max(best?.score ?? 0, score);
@@ -87,8 +107,15 @@ export default function Overlays({
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (busyRef.current) return;
+    // `saved` is terminal for the run: the form is not rendered any more, but
+    // a queued submit (double Enter, a synthesised click on the old button)
+    // must still be a no-op. `busyRef` covers the in-flight window.
+    if (savedRef.current || busyRef.current) return;
     if (saveStatus === 'saving' || saveStatus === 'saved') return;
+
+    // One key for the whole run, minted on the first attempt and reused by
+    // RETRY: a POST that timed out after the insert must replay, not duplicate.
+    if (!keyRef.current) keyRef.current = makeRunKey();
 
     busyRef.current = true;
     const clean = normalizeName(name);
@@ -98,7 +125,13 @@ export default function Overlays({
     setSaveError('');
 
     try {
-      const created = await submitScore({ name: clean, score, level, lines });
+      const created = await submitScore({
+        name: clean,
+        score,
+        level,
+        lines,
+        key: keyRef.current,
+      });
 
       // A provisional offline copy was replaced by the real row: retire it so
       // the local list (and the merged board) never shows the run twice.
@@ -117,12 +150,22 @@ export default function Overlays({
       }
 
       invalidateScoreCache();
+      savedRef.current = true;
+      setSavedName(clean);
       setSaveRank(rank);
       setLocalOnly(false);
       setSaveStatus('saved');
+      // Unmounted mid-flight (REBOOT): the row is on the server and in the
+      // local list, but there is no form left to confirm it on.
+      if (!aliveRef.current) return;
+      // Order matters: the highlight is set first, then the dialog opens, so
+      // the new row is already marked when the modal appears. The run is over,
+      // so nothing gets paused.
       onSaved?.(created);
+      onRankings?.();
     } catch (error) {
-      // Offline / rate-limited / rejected: keep the run on this device.
+      // Offline / rate-limited / rejected: keep the run on this device, say so
+      // and stay put. The one-shot rule only applies to a confirmed save.
       if (!provisionalRef.current) {
         const entry = saveLocalScore({
           name: clean,
@@ -133,7 +176,7 @@ export default function Overlays({
         });
         if (entry) {
           provisionalRef.current = entry.id;
-          onSaved?.(entry);
+          if (aliveRef.current) onSaved?.(entry);
         }
       }
       invalidateScoreCache();
@@ -147,16 +190,14 @@ export default function Overlays({
 
   if (gameOver) {
     const locked = saveStatus === 'saving' || saveStatus === 'saved';
+    // A confirmed save is terminal: no input, no submit, no way back to idle.
+    const saved = saveStatus === 'saved';
     const note =
       saveStatus === 'saving'
         ? 'Contacting the leaderboard…'
-        : saveStatus === 'saved'
-          ? saveRank
-            ? `Saved · rank #${saveRank}`
-            : 'Saved'
-          : saveStatus === 'error'
-            ? `Saved locally · ${saveError}`
-            : '';
+        : saveStatus === 'error'
+          ? `Saved locally · ${saveError}`
+          : '';
 
     return (
       <div className="overlay game-over-overlay" role="dialog" aria-label="Game over">
@@ -174,33 +215,49 @@ export default function Overlays({
           </span>
         </div>
 
-        <form className="save-form" onSubmit={handleSubmit} noValidate>
-          <input
-            id="save-name"
-            ref={inputRef}
-            className="save-input"
-            type="text"
-            name="nickname"
-            value={name}
-            maxLength={20}
-            autoComplete="nickname"
-            inputMode="text"
-            spellCheck="false"
-            placeholder="Pilot name"
-            aria-label="Player name"
-            disabled={locked}
-            onChange={(event) => setName(event.target.value)}
-          />
-          {saveStatus === 'error' ? (
-            <button type="submit" className="btn btn--small btn--warn">
-              Retry
-            </button>
-          ) : (
-            <button type="submit" className="btn btn--small" disabled={locked}>
-              {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : 'Save Score'}
-            </button>
-          )}
-        </form>
+        {saved ? (
+          /*
+           * Read-only confirmation. It replaces the form for this run: the only
+           * ways out are RANKINGS and REBOOT (a new run remounts Overlays, so
+           * the form comes back clean).
+           */
+          <div className="save-confirm" role="status" aria-live="polite">
+            <span className="save-confirm__line">
+              Saved as <b className="save-confirm__name">{savedName}</b>
+            </span>
+            <span className="save-confirm__rank">
+              {saveRank ? `Rank #${saveRank}` : 'On the board'}
+            </span>
+          </div>
+        ) : (
+          <form className="save-form" onSubmit={handleSubmit} noValidate>
+            <input
+              id="save-name"
+              ref={inputRef}
+              className="save-input"
+              type="text"
+              name="nickname"
+              value={name}
+              maxLength={20}
+              autoComplete="nickname"
+              inputMode="text"
+              spellCheck="false"
+              placeholder="Pilot name"
+              aria-label="Player name"
+              disabled={locked}
+              onChange={(event) => setName(event.target.value)}
+            />
+            {saveStatus === 'error' ? (
+              <button type="submit" className="btn btn--small btn--warn">
+                Retry
+              </button>
+            ) : (
+              <button type="submit" className="btn btn--small" disabled={locked}>
+                {saveStatus === 'saving' ? 'Saving…' : 'Save Score'}
+              </button>
+            )}
+          </form>
+        )}
 
         <p className={`save-note${localOnly ? ' is-local' : ''}`} role="status" aria-live="polite">
           {note}

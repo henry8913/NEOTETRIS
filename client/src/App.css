@@ -816,6 +816,52 @@ button {
   color: var(--neon-yellow);
 }
 
+/*
+ * Confirmation that replaces the form once the run is on the board. Read-only
+ * on purpose: no input, no submit, nothing focusable — the next move is
+ * RANKINGS or REBOOT.
+ */
+.save-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: min(100%, 240px);
+  min-height: 44px;
+  margin: 0;
+  padding: clamp(4px, 1.4cqw, 8px) clamp(6px, 2cqw, 12px);
+  font-family: 'Orbitron', sans-serif;
+  font-size: clamp(10px, 2.8cqw, 12px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.3;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.07);
+  border: 1px solid rgba(0, 240, 255, 0.32);
+  border-radius: 4px;
+}
+
+.save-confirm__line {
+  max-width: 100%;
+}
+
+.save-confirm__name {
+  font-weight: 700;
+  color: #fff;
+  overflow-wrap: anywhere;
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.45);
+}
+
+.save-confirm__rank {
+  font-size: clamp(9px, 2.4cqw, 11px);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--neon-yellow);
+}
+
 .overlay-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1328,16 +1374,18 @@ button {
   line-height: 1;
   text-transform: uppercase;
   color: var(--neon-cyan);
-  /* Translucent, never a panel: the piece behind stays visible. The text
-     shadow is what keeps the label readable over a bright landing cell. */
-  background: rgba(8, 10, 26, 0.4);
-  border: 1px solid rgba(0, 240, 255, 0.5);
+  /* Translucent, never a panel: the piece behind stays visible. 0.22 is close
+     to the joystick's resting 0.18 but still holds enough contrast for the
+     label; the text shadow is what keeps that label readable over a bright
+     landing cell. */
+  background: rgba(8, 10, 26, 0.22);
+  border: 1px solid rgba(0, 240, 255, 0.35);
   border-radius: 8px;
-  text-shadow: 0 1px 3px rgba(3, 3, 10, 0.9);
+  text-shadow: 0 1px 3px rgba(3, 3, 10, 0.95), 0 0 10px rgba(0, 240, 255, 0.3);
   box-shadow:
     0 0 8px rgba(0, 240, 255, 0.06),
     inset 0 0 12px rgba(0, 240, 255, 0.06),
-    inset 0 -6px 12px rgba(3, 3, 10, 0.24);
+    inset 0 -6px 12px rgba(3, 3, 10, 0.16);
   cursor: pointer;
   /* Own the gesture: no scroll, no double-tap zoom, no 300ms delay. */
   touch-action: none;
@@ -1352,48 +1400,52 @@ button {
   grid-column: 1 / -1;
   font-size: clamp(12px, 3.2vw, 14px);
   color: #ff4fc3;
-  border-color: rgba(255, 0, 170, 0.5);
+  border-color: rgba(255, 0, 170, 0.4);
   background:
-    radial-gradient(120% 140% at 50% 0%, rgba(255, 0, 170, 0.18), transparent 70%),
-    rgba(8, 10, 26, 0.4);
+    radial-gradient(120% 140% at 50% 0%, rgba(255, 0, 170, 0.14), transparent 70%),
+    rgba(8, 10, 26, 0.26);
+  text-shadow: 0 1px 3px rgba(3, 3, 10, 0.95), 0 0 12px rgba(255, 79, 195, 0.34);
   box-shadow:
     0 0 10px rgba(255, 0, 170, 0.16),
     inset 0 0 12px rgba(255, 0, 170, 0.08),
-    inset 0 -6px 12px rgba(3, 3, 10, 0.24);
+    inset 0 -6px 12px rgba(3, 3, 10, 0.16);
 }
 
 .action-btn--pause.is-pause {
   color: var(--neon-yellow);
-  border-color: rgba(255, 204, 0, 0.5);
+  border-color: rgba(255, 204, 0, 0.35);
+  text-shadow: 0 1px 3px rgba(3, 3, 10, 0.95), 0 0 10px rgba(255, 204, 0, 0.3);
 }
 
 .action-btn--pause.is-play {
   color: var(--neon-green);
-  border-color: rgba(57, 255, 20, 0.5);
+  border-color: rgba(57, 255, 20, 0.35);
+  text-shadow: 0 1px 3px rgba(3, 3, 10, 0.95), 0 0 10px rgba(57, 255, 20, 0.3);
 }
 
 /* Pointerdown sets `data-pressed` (instant, one frame); `:active` covers mouse
-   and keyboard. Both are brighter than the resting fill. */
+   and keyboard. Both are much brighter than the resting fill: with a 0.22 rest
+   the press has to land at 0.45+ or the feedback stops reading. */
 .action-btn:not(:disabled):active,
 .action-btn[data-pressed='true'] {
   /* One frame, not 100ms: the press has to read as instant under the thumb. */
   transition: none;
   transform: translateY(1px) scale(0.985);
   border-color: currentColor;
-  background: rgba(8, 10, 26, 0.56);
+  background: rgba(8, 10, 26, 0.48);
   box-shadow:
-    0 0 16px rgba(0, 240, 255, 0.28),
-    inset 0 0 16px rgba(0, 240, 255, 0.14);
+    0 0 18px rgba(0, 240, 255, 0.34),
+    inset 0 0 16px rgba(0, 240, 255, 0.16);
 }
 
 .action-btn--drop:not(:disabled):active,
 .action-btn--drop[data-pressed='true'] {
   background:
-    radial-gradient(120% 140% at 50% 0%, rgba(255, 0, 170, 0.32), transparent 70%),
-    rgba(8, 10, 26, 0.56);
+    radial-gradient(120% 140% at 50% 0%, rgba(255, 0, 170, 0.34), transparent 70%),
+    rgba(8, 10, 26, 0.5);
   box-shadow:
-    0 0 20px rgba(255, 0, 170, 0.4),
-    inset 0 0 16px rgba(255, 0, 170, 0.2);
+    0 0 22px rgba(255, 0, 170, 0.44),
+    inset 0 0 16px rgba(255, 0, 170, 0.22);
 }
 
 .action-btn:disabled {

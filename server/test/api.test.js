@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { createApp } from '../src/app.js';
 import { createMemoryStore } from '../src/store.js';
+import { KEY_ERROR_MESSAGE } from '../src/validation.js';
 
 /**
  * Boots the app on an ephemeral port so tests never fight over 3001.
@@ -85,6 +86,102 @@ test('POST /api/scores applies defaults for omitted fields', async (t) => {
   assert.equal(body.name, 'Anonymous');
   assert.equal(body.level, 1);
   assert.equal(body.lines, 0);
+});
+
+test('a repeated idempotency key returns the original row with 200', async (t) => {
+  const ctx = await startServer();
+  t.after(() => ctx.close());
+
+  const payload = { name: 'Ada', score: 4200, level: 4, lines: 33, key: 'run-abc_123456' };
+
+  const firstRes = await postScore(ctx.baseUrl, payload);
+  assert.equal(firstRes.status, 201);
+  const first = await firstRes.json();
+
+  const retryRes = await postScore(ctx.baseUrl, payload);
+  assert.equal(retryRes.status, 200, 'a retry must not report a creation');
+  const retry = await retryRes.json();
+
+  assert.deepEqual(retry, first, 'same id, original date, unchanged fields');
+  assert.equal(retry.key, undefined, 'the key is never exposed');
+  assert.equal(retry._id, undefined);
+  assert.equal(retry.__v, undefined);
+
+  const listRes = await fetch(`${ctx.baseUrl}/api/scores`);
+  const list = await listRes.json();
+  assert.equal(list.length, 1, 'exactly one row was stored');
+  assert.equal(list[0].id, first.id);
+});
+
+test('concurrent requests with the same key produce exactly one row', async (t) => {
+  const ctx = await startServer();
+  t.after(() => ctx.close());
+
+  const payload = { name: 'Ada', score: 900, level: 2, lines: 10, key: 'parallel-key-1' };
+  const responses = await Promise.all([
+    postScore(ctx.baseUrl, payload),
+    postScore(ctx.baseUrl, payload),
+  ]);
+
+  const statuses = responses.map((res) => res.status).sort();
+  assert.deepEqual(statuses, [200, 201]);
+
+  const rows = await Promise.all(responses.map((res) => res.json()));
+  assert.equal(rows[0].id, rows[1].id);
+  assert.equal((await (await fetch(`${ctx.baseUrl}/api/scores`)).json()).length, 1);
+});
+
+test('different keys with an identical payload create two rows', async (t) => {
+  const ctx = await startServer();
+  t.after(() => ctx.close());
+
+  const base = { name: 'Ada', score: 4200, level: 4, lines: 33 };
+
+  const firstRes = await postScore(ctx.baseUrl, { ...base, key: 'key-aaaaaaaa' });
+  const secondRes = await postScore(ctx.baseUrl, { ...base, key: 'key-bbbbbbbb' });
+
+  assert.equal(firstRes.status, 201);
+  assert.equal(secondRes.status, 201);
+
+  const first = await firstRes.json();
+  const second = await secondRes.json();
+  assert.notEqual(first.id, second.id);
+
+  const list = await (await fetch(`${ctx.baseUrl}/api/scores`)).json();
+  assert.equal(list.length, 2, 'dedupe is by key, not by content');
+});
+
+test('POST /api/scores without a key still inserts every time (regression)', async (t) => {
+  const ctx = await startServer();
+  t.after(() => ctx.close());
+
+  const payload = { name: 'Ada', score: 100 };
+
+  const firstRes = await postScore(ctx.baseUrl, payload);
+  const secondRes = await postScore(ctx.baseUrl, payload);
+
+  assert.equal(firstRes.status, 201);
+  assert.equal(secondRes.status, 201);
+
+  const list = await (await fetch(`${ctx.baseUrl}/api/scores`)).json();
+  assert.equal(list.length, 2);
+});
+
+test('POST /api/scores rejects invalid idempotency keys with 400 and details', async (t) => {
+  const ctx = await startServer();
+  t.after(() => ctx.close());
+
+  for (const key of ['ab', 'has spaces', 'x'.repeat(65), 123]) {
+    const res = await postScore(ctx.baseUrl, { score: 10, key });
+
+    assert.equal(res.status, 400, `key ${JSON.stringify(key)} should be rejected`);
+
+    const body = await res.json();
+    assert.equal(body.error, 'Invalid payload');
+    assert.deepEqual(body.details, [{ field: 'key', message: KEY_ERROR_MESSAGE }]);
+  }
+
+  assert.equal(ctx.store.size, 0);
 });
 
 test('POST /api/scores rejects invalid payloads with 400 and details', async (t) => {

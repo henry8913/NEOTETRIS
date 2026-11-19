@@ -8,6 +8,9 @@
  * - Missing `name`, `level` and `lines` are not errors: they fall back to
  *   defaults. Missing `score` is an error because there is nothing to rank.
  * - Unknown fields are ignored.
+ * - `key` is optional. When present it is the client's idempotency key: a
+ *   retry that reuses it must return the original row instead of inserting a
+ *   second one. It is never part of the public score shape.
  * - All error messages are in English.
  */
 
@@ -19,6 +22,13 @@ export const MAX_LINES = 999999;
 export const DEFAULT_NAME = 'Anonymous';
 export const DEFAULT_LEVEL = 1;
 export const DEFAULT_LINES = 0;
+
+export const KEY_MIN_LENGTH = 8;
+export const KEY_MAX_LENGTH = 64;
+// Idempotency keys travel in JSON and in URLs/logs: keep them boring on purpose.
+const KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const KEY_ERROR_MESSAGE =
+  'Key must be 8 to 64 characters using only A-Z, a-z, 0-9, "_" and "-"';
 
 // Control characters (C0, DEL, C1) — kept out of stored/rendered names.
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -45,7 +55,7 @@ export function sanitizeName(name) {
 
 /**
  * @param {unknown} body parsed JSON body
- * @returns {{ ok: true, value: { name: string, score: number, level: number, lines: number } }
+ * @returns {{ ok: true, value: { name: string, score: number, level: number, lines: number, key?: string } }
  *   | { ok: false, errors: Array<{ field: string, message: string }> }}
  */
 export function validateScorePayload(body) {
@@ -108,7 +118,27 @@ export function validateScorePayload(body) {
     }
   }
 
+  // --- key (optional idempotency key) -----------------------------------
+  let key;
+  if (payload.key !== undefined && payload.key !== null) {
+    if (
+      typeof payload.key !== 'string' ||
+      payload.key.length < KEY_MIN_LENGTH ||
+      payload.key.length > KEY_MAX_LENGTH ||
+      !KEY_PATTERN.test(payload.key)
+    ) {
+      errors.push({ field: 'key', message: KEY_ERROR_MESSAGE });
+    } else {
+      key = payload.key;
+    }
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
-  return { ok: true, value: { name: sanitizeName(name), score, level, lines } };
+  const value = { name: sanitizeName(name), score, level, lines };
+  // Omitted (not `undefined`) when absent, so the value shape stays exactly
+  // the four legacy fields for clients that never send a key.
+  if (key !== undefined) value.key = key;
+
+  return { ok: true, value };
 }
