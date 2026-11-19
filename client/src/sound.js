@@ -1,24 +1,45 @@
 /**
  * Minimal WebAudio engine — no audio assets, only oscillators and gain nodes.
  *
- * The AudioContext is created lazily on the first user gesture (`initAudio`),
- * because browsers block audio before an interaction. Every sound is a short
- * envelope at a low master volume, so nothing clips and the game never gets in
- * the way of the music the player might be listening to.
+ * The AudioContext is created lazily on the first gesture (`initAudio`),
+ * because browsers block audio before an interaction. The signal path is
+ * `voice → master gain → compressor → destination`: the compressor keeps the
+ * mix loud enough for a phone speaker without ever clipping, which is why the
+ * master sits high (0.45) while every note envelope stays short and soft.
+ *
+ * Mobile reality check: iOS starts the context `suspended` (and can interrupt
+ * it again on a call, a screen lock or an app switch). Nothing here throws and
+ * no sound is dropped because of it: `playSound` resumes and schedules, and
+ * the app re-arms the context from persistent, passive gestures (see App.jsx).
  */
 
 const STORAGE_KEY = 'neotetris.muted';
-const MASTER_VOLUME = 0.12;
+const MASTER_VOLUME = 0.45;
+
+/** Phone-speaker friendly glue: −18 dB threshold, 6:1, fast attack. */
+const COMPRESSOR = {
+  threshold: -18,
+  knee: 12,
+  ratio: 6,
+  attack: 0.003,
+  release: 0.25,
+};
 
 /** @type {AudioContext | null} */
 let ctx = null;
 /** @type {GainNode | null} */
 let master = null;
+/** @type {DynamicsCompressorNode | null} */
+let bus = null;
+/** The iOS silent-buffer unlock only has to happen once per page. */
+let unlocked = false;
 let muted = readMuted();
 
 function readMuted() {
   try {
-    return globalThis.localStorage?.getItem(STORAGE_KEY) === '1';
+    // `window` is the browser-only guard: Node exposes a stub `localStorage`
+    // that warns on access, and the game never runs without a window.
+    return globalThis.window?.localStorage?.getItem(STORAGE_KEY) === '1';
   } catch {
     return false;
   }
@@ -26,10 +47,14 @@ function readMuted() {
 
 function persistMuted(value) {
   try {
-    globalThis.localStorage?.setItem(STORAGE_KEY, value ? '1' : '0');
+    globalThis.window?.localStorage?.setItem(STORAGE_KEY, value ? '1' : '0');
   } catch {
     /* storage can be blocked (private mode): muting still works in-session */
   }
+}
+
+function audioCtor() {
+  return globalThis.AudioContext || globalThis.webkitAudioContext;
 }
 
 /** True when the player silenced the game (persisted across reloads). */
@@ -45,23 +70,71 @@ export function setMuted(next) {
 }
 
 /**
+ * Diagnostic only (never printed): reports the engine state so a bug report or
+ * a test can tell "no gesture yet" from "blocked by the browser".
+ *
+ * @returns {'uninitialized' | 'suspended' | 'running' | 'unsupported'}
+ */
+export function audioState() {
+  if (typeof audioCtor() !== 'function') return 'unsupported';
+  if (!ctx) return 'uninitialized';
+  return ctx.state === 'running' ? 'running' : 'suspended';
+}
+
+/** Diagnostic only: the effective master gain (0 while muted). */
+export function masterVolume() {
+  return muted ? 0 : MASTER_VOLUME;
+}
+
+/**
+ * The iOS workaround: playing one silent sample through the context flips the
+ * page's audio session from "ambient/locked" to "playable". Harmless elsewhere.
+ */
+function unlockSession() {
+  if (unlocked || !ctx) return;
+  unlocked = true;
+  try {
+    const buffer = ctx.createBuffer(1, 1, 22050);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.start(0);
+  } catch {
+    /* older engines: the silent buffer is a no-op, nothing to recover from */
+  }
+}
+
+/**
  * Creates (or resumes) the AudioContext. Safe to call on every gesture: it is
- * idempotent and never throws when WebAudio is unavailable.
+ * idempotent, returns immediately while the context runs and never throws when
+ * WebAudio is unavailable.
  */
 export function initAudio() {
   try {
-    const AudioCtor = globalThis.AudioContext || globalThis.webkitAudioContext;
+    const AudioCtor = audioCtor();
     if (!AudioCtor) return;
+
     if (!ctx) {
       ctx = new AudioCtor();
       master = ctx.createGain();
       master.gain.value = muted ? 0 : MASTER_VOLUME;
-      master.connect(ctx.destination);
+      bus = ctx.createDynamicsCompressor();
+      bus.threshold.value = COMPRESSOR.threshold;
+      bus.knee.value = COMPRESSOR.knee;
+      bus.ratio.value = COMPRESSOR.ratio;
+      bus.attack.value = COMPRESSOR.attack;
+      bus.release.value = COMPRESSOR.release;
+      master.connect(bus).connect(ctx.destination);
+      unlockSession();
     }
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+
+    // Cheap guard: once running, every later gesture is a no-op.
+    if (ctx.state === 'running') return;
+    if (typeof ctx.resume === 'function') ctx.resume().catch(() => {});
   } catch {
     ctx = null;
     master = null;
+    bus = null;
   }
 }
 
@@ -150,15 +223,31 @@ function schedule(notes) {
 
 /**
  * Plays one named sound. Silent (and harmless) when muted, before the first
- * gesture, or when the AudioContext is suspended/unavailable.
+ * gesture or when the browser has no WebAudio.
+ *
+ * A suspended context is resumed and the notes are scheduled *after* the
+ * promise resolves: on iOS the first sounds arrive while the context is still
+ * waking up, and dropping them would leave the phone silent for a while.
  */
 export function playSound(name) {
   if (muted || !ctx || !master) return;
-  if (ctx.state !== 'running') return;
   const notes = SOUNDS[name];
   if (!notes) return;
+
   try {
-    schedule(notes);
+    if (ctx.state === 'running') {
+      schedule(notes);
+      return;
+    }
+    // Suspended (iOS first gesture, app switch, call, screen lock): wake first,
+    // then schedule. A closed context rejects and is simply ignored.
+    if (typeof ctx.resume !== 'function') return;
+    ctx
+      .resume()
+      .then(() => {
+        if (!muted) schedule(notes);
+      })
+      .catch(() => {});
   } catch {
     /* never let audio break the game loop */
   }

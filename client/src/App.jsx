@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { LOCK_DELAY_MS, MAX_LOCK_RESETS, isResting, tickSpeed } from './tetris.js';
 import { initAll, reduceAll, fxDone } from './fx.js';
-import { initAudio, isMuted, playSound, setMuted } from './sound.js';
+import { audioState, initAudio, isMuted, playSound, setMuted } from './sound.js';
 import { press } from './input.js';
 import { useWideLayout } from './layout.js';
 import Background from './components/Background.jsx';
@@ -97,14 +97,37 @@ export default function App() {
     }
   }, [muted]);
 
-  // Unlock WebAudio on the first real gesture (never at load time).
+  /*
+   * WebAudio unlock, not just "first gesture". iOS starts the context
+   * `suspended`, and a call, a screen lock or an app switch interrupts it
+   * again: a one-shot listener would leave the phone silent for the rest of
+   * the session. Every gesture is passive and idempotent (`initAudio` returns
+   * immediately while the context runs), and coming back to the page resumes
+   * an existing context without ever creating one outside a gesture.
+   */
   useEffect(() => {
-    const unlock = () => initAudio();
-    window.addEventListener('pointerdown', unlock, { once: true });
-    window.addEventListener('keydown', unlock, { once: true });
+    const gesture = () => initAudio();
+    const wake = () => {
+      if (audioState() === 'suspended') initAudio();
+    };
+    const onVisible = () => {
+      if (!document.hidden) wake();
+    };
+
+    window.addEventListener('pointerdown', gesture, { passive: true });
+    window.addEventListener('touchend', gesture, { passive: true });
+    window.addEventListener('click', gesture, { passive: true });
+    window.addEventListener('keydown', gesture, { passive: true });
+    window.addEventListener('pageshow', wake);
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
-      window.removeEventListener('pointerdown', unlock);
-      window.removeEventListener('keydown', unlock);
+      window.removeEventListener('pointerdown', gesture);
+      window.removeEventListener('touchend', gesture);
+      window.removeEventListener('click', gesture);
+      window.removeEventListener('keydown', gesture);
+      window.removeEventListener('pageshow', wake);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 
@@ -261,6 +284,17 @@ export default function App() {
           />
         )}
 
+        {/*
+         * Touch layer: translucent controls on the playfield, compact only. It
+         * lives inside the stage (not in a dock row) and stays unmounted on the
+         * start / game-over screens, so those overlays are never blocked; while
+         * paused it stays mounted (PLAY must remain reachable) and simply sits
+         * under the pause overlay in the stacking order.
+         */}
+        {!wide && started && !gameOver && (
+          <TouchControls dispatch={dispatch} disabled={idle} paused={paused} />
+        )}
+
         <Overlays
           key={`run-${runId}`}
           started={started}
@@ -334,11 +368,9 @@ export default function App() {
             disabled={holdDisabled}
           />
 
+          {/* No dock row: the touch layer rides on top of `stage`, so the dims
+              that the controls used to take are handed back to the playfield. */}
           <main className="game-area">{stage}</main>
-
-          <footer className="dock">
-            <TouchControls dispatch={dispatch} disabled={idle} paused={paused} />
-          </footer>
         </>
       )}
 
