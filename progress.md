@@ -10,12 +10,16 @@
 - **FX layer**: `fx.js` — wrapper puro del reducer (`initAll`, `reduceAll`, `fxDone`): deriva `intro`, `flash`, `banner`, `shake`, `wash`, `shock`, `drop` nello stesso dispatch; azioni `FX_DONE` / `FX_SHAKE`
 - **Audio**: `sound.js` — solo WebAudio (oscillatori + gain, nessun asset), 12 suoni, mute persistito in `localStorage` (`neotetris.muted`), `AudioContext` creato al primo gesto
 - **Layout**: `layout.js` — `WIDE_LAYOUT_QUERY = '(min-width: 900px), (orientation: landscape) and (max-height: 560px)'` + `useWideLayout` (`useSyncExternalStore`); `input.js` — `press()` come unico path dei bottoni, `pressHardDrop()`
-- **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~335 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, due composizioni di layout
-- **Rendering**: `components/` (`Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Overlays`, `Background`, `Fx`, `StatCard`, `pieces`, `TouchControls`); stili in `App.css` + `index.css` (no framework CSS)
-- **Test**: `node:test` in entrambi i package, nessun framework — **35 test client**, **44 test server**
+- **API client**: `api.js` — unico modulo che parla HTTP: `API_BASE = VITE_API_URL || ''`, `fetchScores(limit, { timeout, signal })`, `submitScore()`, `fetchHealth()`; timeout 5s via abort (`408`), righe validate (`parseScore`), errori con `status`/`details`/`retryAfter`
+- **Helper leaderboard**: `leaderboard.js` — funzioni pure condivise: `normalizeName` (max 20, strip control, fallback `PLAYER`), `compareScores`, `mergeScores` (dedupe per `id`), `rankOf`, `isRecord`, `formatDate` (UTC `DD/MM`)
+- **Storage locale**: `storage.js` — wrapper sicuro di `localStorage` in `try/catch`; chiavi `neotetris.player`, `neotetris.best`, `neotetris.scores` (max 20 run locali)
+- **Cache**: `scoreCache.js` — board merged in memoria per tab, TTL 30s, invalidata dopo un salvataggio o su REFRESH/RETRY
+- **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~375 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, stato della modale rankings, due composizioni di layout
+- **Rendering**: `components/` (`Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Overlays`, `Leaderboard`, `Background`, `Fx`, `StatCard`, `pieces`, `TouchControls`); stili in `App.css` + `index.css` (no framework CSS)
+- **Test**: `node:test` in entrambi i package, nessun framework — **50 test client** (13 tetris + 22 game + 15 leaderboard), **44 test server**
 - **Backend** modulare: `app.js` (factory `createApp`, montabile nei test senza `listen`), `store.js` (store memoria/Mongo con fallback automatico), `validation.js` (payload score), `index.js` (entry sottile con graceful shutdown)
 - **Store**: Mongo opzionale, timeout 3s → store in memoria; risposta API sempre `{ id, name, score, level, lines, date }` (mai `_id`/`__v`)
-- **Leaderboard UI** non ancora collegata all'API
+- **Leaderboard end-to-end**: game over → best locale → form nome → `POST /api/scores` → rank; modale Top 10 con badge SERVER/LOCAL e fallback offline
 
 ## Convenzioni chiave
 
@@ -69,11 +73,20 @@
 - Background reattivo al livello (`--level`, cap a 10), reduced-motion rispettato (animazioni decorative gated, count-up istantaneo)
 - Test: **35 client / 44 server**, lint pulito, build **219.55 kB JS (68.94 kB gzip) / 28.47 kB CSS (6.82 kB gzip)**
 
+### Round 5 — Leaderboard end-to-end ✅
+- Client collegato all'API: `api.js` (timeout 5s, righe validate, `408` timeout, `429` con `retryAfter`), `leaderboard.js` (helper puri), `storage.js`, `scoreCache.js`
+- Game over: form nome (`maxLength 20`, nome ricordato), `SAVE SCORE` con stati idle/saving/saved/error, `SAVED · RANK #N`, `NEW RECORD` e `BEST`; salvataggio locale in caso di errore/rete
+- Modale `TOP RUNNERS` accessibile (`components/Leaderboard.jsx`): focus trap, Esc/backdrop, badge `SERVER`/`LOCAL`, skeleton, RETRY/REFRESH, cache 30s
+- `RANKS` nel rail desktop e negli overlay start/game over; apertura in partita → pausa automatica
+- Tastiera: a game over `Enter`/`Space` non riavviano (solo `REBOOT`), Esc chiude la modale, `m` non scatta mentre si scrive
+- Dev: proxy Vite `/api` → `:3001`; produzione same-origin; `VITE_API_URL` per split deployment
+- Test: `leaderboard.test.js` (15) → **50 test client**, **44 server**
+
 ### Verifica finale
-- `npm test --prefix client` → 35/35
+- `npm test --prefix client` → 50/50
 - `npm test --prefix server` → 44/44
 - `npm run lint --prefix client` → nessun errore
-- `npm run build --prefix client` → build ok (219.55 kB JS / 28.47 kB CSS)
+- `npm run build --prefix client` → build ok (**234.6 kB JS / 39.1 kB CSS**)
 
 ## Layout
 
@@ -96,16 +109,27 @@
 - Mute persistito in `localStorage` (`neotetris.muted`), toggle con `M` o col bottone (aria-pressed)
 - `prefers-reduced-motion`: animazioni decorative disattivate, count-up istantaneo, effetti pesanti spenti
 
+## Leaderboard
+
+- **End-to-end**: a game over il best locale viene scritto subito (`neotetris.best`), poi il form nome (precompilato con `neotetris.player`) invia `POST /api/scores`; in caso di successo la riga creata viene salvata in locale e si chiede `GET /api/scores?limit=50` per calcolare `SAVED · RANK #N`
+- **Offline**: se il POST fallisce (rete, timeout, 429, 400) la run resta in `neotetris.scores` con id `local-…`; la UI mostra `SAVED LOCALLY` e `RETRY` rispedisce al server, sostituendo la copia provvisoria
+- **Modale**: Top 10 con `mergeScores(server, local)`, badge `SERVER`/`LOCAL`, skeleton, stati vuoto/errore, RETRY/REFRESH; se il server non risponde si usa `fetchHealth()` per distinguere "offline" da "server in errore"
+- **Cache**: board merged in memoria per 30s (`CACHE_TTL_MS`), invalidata dopo un salvataggio e dai pulsanti di refresh
+- **Accessibilità**: `role="dialog"` + `aria-modal`, focus iniziale su CLOSE, Tab trap, Esc/backdrop per chiudere, focus restituito all'elemento che l'ha aperta; apertura in partita → `TOGGLE_PAUSE`
+- **Storage**: `neotetris.player` (nome), `neotetris.best` (record), `neotetris.scores` (max 20 run, ordinate); ogni accesso in `try/catch`, JSON corrotto ignorato; il mute resta in `neotetris.muted`
+- **Rete**: proxy Vite solo in dev, stessa origine in produzione, `VITE_API_URL` come override; richieste con timeout 5s e righe validate lato client
+
 ## Problemi noti / prossimi passi
 
-- **Leaderboard UI** non ancora collegata alle API (`GET`/`POST /api/scores`); oggi il client non chiama il server e Vite non ha proxy `/api`
-- **High score locale** non ancora persistito: l'unica preferenza salvata è il mute
+- **Mongo opzionale**: senza DB la leaderboard server vive in RAM (score persi al riavvio del server); sopravvivono solo le run locali sul dispositivo
+- **Rate limit**: 30 POST/min per IP; il client mostra `retryAfter` ma non fa code/retry automatico
+- **Nessuna moderation dei nomi**: il server sanitizza soltanto (trim, control char, max 20), non filtra contenuti
 - **Gamepad** non supportato
-- **Mongo opzionale**: senza DB si usa lo store in memoria (score persi al riavvio)
+- **Profili server-side** (best personale persistente per giocatore) non implementati: oggi il best è solo locale
 - Eventuale rifinitura: suoni/animazioni aggiuntive e tuning delle soglie combo
 
 ## Convenzione commit
 
-- Subject **solo numerico progressivo** (`0.08`, `0.09`, …), body vuoto
+- Subject **solo numerico progressivo** (`0.09` → `0.10`), body vuoto
 - La documentazione (`AGENTS.md`, `README.md`, `progress.md`) va nello **stesso commit** del codice
 - Branch: `feat/neotetris-upgrade-vN`

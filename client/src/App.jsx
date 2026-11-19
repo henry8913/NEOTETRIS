@@ -13,6 +13,7 @@ import ControlsRail from './components/ControlsRail.jsx';
 import MobileHud from './components/MobileHud.jsx';
 import TouchControls from './components/TouchControls.jsx';
 import Overlays from './components/Overlays.jsx';
+import Leaderboard from './components/Leaderboard.jsx';
 import './App.css';
 
 const CLEAR_SOUNDS = ['clear1', 'clear2', 'clear3', 'clear4'];
@@ -62,8 +63,28 @@ export default function App() {
   // compact one. Only the active composition is mounted (no hidden buttons).
   const wide = useWideLayout();
 
-  const start = useCallback(() => dispatch({ type: 'START' }), []);
+  // Rankings modal + the run counter that remounts the game-over form.
+  const [rankingsOpen, setRankingsOpen] = useState(false);
+  const [runId, setRunId] = useState(0);
+  const [highlightId, setHighlightId] = useState(null);
+
+  const start = useCallback(() => {
+    // A fresh Overlays (and therefore a fresh save form) for every run.
+    setRunId((id) => id + 1);
+    setRankingsOpen(false);
+    dispatch({ type: 'START' });
+  }, []);
   const resume = useCallback(() => dispatch({ type: 'TOGGLE_PAUSE' }), []);
+  const openRankings = useCallback(() => {
+    setRankingsOpen(true);
+    // Reading the board mid-run must not cost the run: pause the game behind
+    // the dialog. The start / game-over screens dispatch nothing.
+    if (started && !gameOver && !paused) dispatch({ type: 'TOGGLE_PAUSE' });
+  }, [started, gameOver, paused]);
+  const closeRankings = useCallback(() => setRankingsOpen(false), []);
+  const handleSaved = useCallback((entry) => {
+    setHighlightId(entry?.id ?? null);
+  }, []);
   const done = useCallback((key) => dispatch(fxDone(key)), []);
   const holdPiece = useCallback(() => press(dispatch, { type: 'HOLD' }, 'hold'), []);
   const mutedToggle = useCallback(() => {
@@ -143,6 +164,9 @@ export default function App() {
 
   const onKeyDown = useCallback((e) => {
     if (isTypingTarget(e.target)) return;
+    // While the rankings dialog is open it owns the keyboard: Esc closes it
+    // (handled there), and no game key may reach the board behind it.
+    if (rankingsOpen) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     initAudio();
 
@@ -158,24 +182,29 @@ export default function App() {
       return;
     }
 
-    const idle = !started || gameOver;
-
     if (key === 'Enter' || key === ' ') {
-      if (idle) {
-        if (!e.repeat) dispatch({ type: 'START' });
-      } else if (key === ' ' && !e.repeat) {
+      // Start screen: Enter / Space start the run (through the same callback
+      // as the INITIALIZE button, so the run key and the modal agree).
+      if (!started) {
+        if (!e.repeat) start();
+        return;
+      }
+      // Game over: restarting belongs to REBOOT (or Enter on it). A stray
+      // Enter/Space must never wipe the save form the player is filling in.
+      if (gameOver) return;
+      if (key === ' ' && !e.repeat) {
         dispatch({ type: 'FX_SHAKE', kind: 'light' });
         dispatch({ type: 'HARD_DROP' });
       }
       return;
     }
-    if (idle) return;
+    if (!started || gameOver) return;
 
     const hit = KEY_MAP[key];
     if (!hit || (hit.once && e.repeat)) return;
     if (hit.sound) playSound(hit.sound);
     dispatch(hit.action);
-  }, [started, gameOver, mutedToggle]);
+  }, [started, gameOver, mutedToggle, rankingsOpen, start]);
 
   useEffect(() => {
     window.addEventListener('keydown', onKeyDown);
@@ -233,12 +262,17 @@ export default function App() {
         )}
 
         <Overlays
+          key={`run-${runId}`}
           started={started}
           paused={paused}
           gameOver={gameOver}
           score={score}
+          level={level}
+          lines={lines}
           onStart={start}
           onResume={resume}
+          onRankings={openRankings}
+          onSaved={handleSaved}
         />
       </BoardStage>
     </div>
@@ -279,6 +313,7 @@ export default function App() {
               lines={lines}
               onToggleMute={mutedToggle}
               onHold={holdPiece}
+              onRankings={openRankings}
               disabled={holdDisabled}
               speedMs={tickSpeed(level)}
             />
@@ -331,6 +366,8 @@ export default function App() {
       {fx.intro && (
         <span key={`flash-${fx.intro.id}`} className="fx-start" aria-hidden="true" />
       )}
+
+      <Leaderboard open={rankingsOpen} onClose={closeRankings} highlightId={highlightId} />
     </div>
   );
 }

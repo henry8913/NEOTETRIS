@@ -86,6 +86,43 @@ export function SpeakerIcon({ muted }) {
   );
 }
 
+/** Monochrome trophy, 16px, inherits `currentColor`. */
+export function TrophyIcon() {
+  return (
+    <svg
+      className="trophy-icon"
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M7 4h10v4a5 5 0 0 1-10 0z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 5H4.6v1.6A3.4 3.4 0 0 0 8 10M17 5h2.4v1.6A3.4 3.4 0 0 1 16 10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 13v3.2M8.6 20h6.8M10 20l.7-3.8h2.6l.7 3.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** Mute / unmute. `aria-pressed` mirrors the persisted audio state. */
 export function MuteButton({ muted, onToggle, className = '' }) {
   return (

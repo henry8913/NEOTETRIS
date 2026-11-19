@@ -1,4 +1,4 @@
-import { HoldSlot, MuteButton, NextQueue } from './pieces.jsx';
+import { HoldSlot, MuteButton, NextQueue, TrophyIcon } from './pieces.jsx';
 import StatCard from './StatCard.jsx';
 
 const HINTS = [
@@ -30,6 +30,7 @@ export default function SidePanel({
   lines,
   onToggleMute,
   onHold,
+  onRankings,
   disabled = false,
   speedMs,
 }) {
@@ -61,6 +62,11 @@ export default function SidePanel({
       </div>
 
       <MuteButton muted={muted} onToggle={onToggleMute} />
+
+      <button type="button" className="ranks-btn" onClick={onRankings} aria-label="Open rankings">
+        <TrophyIcon />
+        <span>Ranks</span>
+      </button>
 
       <div className="panel-hints" aria-hidden="true">
         {HINTS.map(([keys, action]) => (
