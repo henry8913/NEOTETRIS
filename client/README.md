@@ -1,16 +1,39 @@
-# React + Vite
+# NEOTETRIS — Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The browser side of NEOTETRIS, a cyberpunk neon Tetris: rendering, input, synthesized audio, effects and the leaderboard UI.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- React 19 + Vite 8, JSX only — **no TypeScript**; plain CSS (neon custom properties in `index.css`, layout and keyframes in `App.css`).
+- No CSS framework, no audio assets (WebAudio oscillators only), inline SVG icons (no emoji).
+- `node:test` for the pure-logic tests — no test framework, no DOM harness.
 
-## React Compiler
+## Commands
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+| Command | What it does |
+|---------|--------------|
+| `npm install` | Installs the client dependencies |
+| `npm run dev` | Vite dev server on `http://localhost:5173` |
+| `npm run build` | Production build into `dist/` |
+| `npm run preview` | Serves the production build locally |
+| `npm run lint` | ESLint 10 (flat config) |
+| `npm test` | 50 tests via `node --test` |
 
-## Expanding the ESLint configuration
+## Source layout
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- `main.jsx` — React root, mounts `<App>` inside `StrictMode`.
+- `App.jsx` — wiring only (~375 lines): `useReducer`, gravity, lock delay, keyboard, audio/FX effects, wide and compact compositions.
+- `tetris.js` — pure primitives: shapes, `isValid`, `tryRotate` (SRS kicks), `lockPiece`, `clearLines`, `calcScore`, `SPEEDS`.
+- `game.js` — pure state + reducer (`initialState`, `spawnPiece`, `takeNext`, `takeFromQueue`, `lockReduce`, `reducer`), zero React.
+- `fx.js` — effect layer derived from each dispatch (`initAll`, `reduceAll`, `fxDone`), so effects never call `setState`.
+- `sound.js` — WebAudio oscillators and gain envelopes, no audio files; mute persisted in `localStorage`.
+- `input.js` — `press` / `pressHardDrop`, the single path for every on-screen button.
+- `layout.js` — media-query hook and the one breakpoint shared by JSX and CSS.
+- `api.js` — the only HTTP module: `API_BASE`, abort timeouts, per-row validation.
+- `leaderboard.js` — pure ranking helpers (`normalizeName`, `mergeScores`, `rankOf`, `formatDate`).
+- `storage.js` — `localStorage` wrapper that never throws (`neotetris.*` keys).
+- `scoreCache.js` — in-memory leaderboard cache with a 30 s TTL.
+- `components/` — `Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Overlays`, `Leaderboard`, `Background`, `Fx`, `StatCard`, `pieces`, `TouchControls`.
+- `*.test.js` — `tetris.test.js`, `game.test.js`, `leaderboard.test.js`.
+
+**API** — `API_BASE = import.meta.env.VITE_API_URL || ''` (empty = same origin), which is what the dev proxy in `vite.config.js` (`/api` → `http://localhost:3001`) and the production Express build rely on. Without the server on `:3001` the game still plays, but scores stay local: they are kept in `localStorage` and shown under the `LOCAL` badge.
