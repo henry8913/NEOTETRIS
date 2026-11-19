@@ -10,6 +10,7 @@ import {
   mergeScores,
   normalizeName,
   rankOf,
+  shouldOfferSave,
 } from './leaderboard.js';
 
 /* ── normalizeName ─────────────────────────────────────────────── */
@@ -133,6 +134,21 @@ test('isRecord compares against the stored best', () => {
   assert.equal(isRecord(0, null), false);
   assert.equal(isRecord(Number.NaN, { score: 10 }), false);
   assert.equal(isRecord(50, { score: 'nope' }), true);
+});
+
+/* ── shouldOfferSave ───────────────────────────────────────────── */
+
+test('shouldOfferSave refuses a zero-score run', () => {
+  assert.equal(shouldOfferSave(0), false);
+  assert.equal(shouldOfferSave(-10), false);
+  assert.equal(shouldOfferSave(Number.NaN), false);
+  assert.equal(shouldOfferSave(undefined), false);
+});
+
+test('shouldOfferSave accepts any positive score, numeric strings included', () => {
+  assert.equal(shouldOfferSave(1), true);
+  assert.equal(shouldOfferSave(4200), true);
+  assert.equal(shouldOfferSave('50'), true);
 });
 
 /* ── formatDate ────────────────────────────────────────────────── */

@@ -14,9 +14,10 @@
 - **Helper leaderboard**: `leaderboard.js` — funzioni pure condivise: `normalizeName` (max 20, strip control, fallback `PLAYER`), `compareScores`, `mergeScores` (dedupe per `id`), `rankOf`, `isRecord`, `formatDate` (UTC `DD/MM`)
 - **Storage locale**: `storage.js` — wrapper sicuro di `localStorage` in `try/catch`; chiavi `neotetris.player`, `neotetris.best`, `neotetris.scores` (max 20 run locali)
 - **Cache**: `scoreCache.js` — board merged in memoria per tab, TTL 30s, invalidata dopo un salvataggio o su REFRESH/RETRY
-- **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~375 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, stato della modale rankings, due composizioni di layout
+- **Build identity**: `buildInfo.js` — `assetName`, `parseEntryAsset`, `buildTag`, `isStale` (puri, testati); tag `BUILD <HASH6>` nella start screen e banner `NEW VERSION AVAILABLE` quando l'HTML servito referenzia un entry diverso (throttle 30s, `cache: 'no-store'`, offline silenzioso)
+- **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~510 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, rilevamento build obsoleta + banner, stato della modale rankings, due composizioni di layout
 - **Rendering**: `components/` (`Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Joystick`, `TouchControls`, `Overlays`, `Leaderboard`, `Background`, `Fx`, `StatCard`, `pieces`); stili in `App.css` + `index.css` (no framework CSS)
-- **Test**: `node:test` in entrambi i package, nessun framework — **75 test client** (13 tetris + 22 game + 15 leaderboard + 13 joystick + 3 sound + 9 runKey), **44 test server**
+- **Test**: `node:test` in entrambi i package, nessun framework — **90 test client** (13 tetris + 22 game + 17 leaderboard + 13 joystick + 3 sound + 9 runKey + 4 storage + 9 buildInfo), **44 test server**
 - **Backend** modulare: `app.js` (factory `createApp`, montabile nei test senza `listen`), `store.js` (store memoria/Mongo con fallback automatico), `validation.js` (payload score), `index.js` (entry sottile con graceful shutdown)
 - **Store**: Mongo opzionale, timeout 3s → store in memoria; risposta API sempre `{ id, name, score, level, lines, date }` (mai `_id`/`__v`)
 - **Leaderboard end-to-end**: game over → best locale → form nome → `POST /api/scores` → rank; modale Top 10 con badge SERVER/LOCAL e fallback offline
@@ -123,11 +124,19 @@
 - Verifiche headless (Chromium 390×844): save → modale con riga `is-highlight`, form assente, conferma `SAVED AS NEO RANK #2`; RETRY → 2 POST con la **stessa** chiave valida; REBOOT → form pulito con il nome ricordato; computed styles del pad come sopra
 - Test: `runKey.test.js` (9) → **75 client**, lint pulito, build **242.25 kB JS (76.21 kB gzip) / 45.17 kB CSS (9.74 kB gzip)**
 
+### Round 10 — Save flow 0.17: nome normalizzato, zero-score, build identity ✅
+- **Nome ricordato normalizzato**: `Overlays` semina il campo con `normalizeName(loadName())` (stessa funzione del submit), quindi un valore legacy in `neotetris.player` (`"PLAYER "`, doppi spazi, caratteri di controllo) non compare più com'era salvato; `maxLength 20` invariato e fallback `PLAYER` invariato (`storage.test.js`)
+- **Zero-score**: `shouldOfferSave(score)` in `leaderboard.js` (puro, `> 0`) governa tutto il flusso. A 0 il game over mostra il blocco read-only `NO SCORE TO SAVE` / `PLAY AGAIN TO GET ON THE BOARD` al posto del form: niente input, niente submit, niente POST, niente `saveLocalScore`, niente `saveBest`, niente badge `NEW RECORD`, niente apertura automatica della modale, nessun autofocus; restano `RANKINGS` e `REBOOT`. `saveBest` rifiuta esplicitamente 0 come ulteriore difesa. Server invariato (`score >= 0` accettato per compatibilità API): la regola è lato client e documentata nell'header di `Overlays.jsx`
+- **Build identity**: `buildInfo.js` (`assetName`, `parseEntryAsset`, `buildTag`, `isStale`) ricava l'entry hashed da `index.html`; `App.jsx` legge lo `<script type="module">` in esecuzione e mostra `BUILD <HASH6>` (primi 6 caratteri dell'hash, `DEV` senza hash) sotto `// 2084 //` nella start screen, a 8–10px, uppercase, bassa opacità
+- **Banner nuova versione**: su mount + `visibilitychange`/`pageshow` (throttle 30s) una `fetch('/', { cache: 'no-store' })` rilegge l'HTML servito e confronta l'entry con quella in esecuzione; se differiscono appare `NEW VERSION AVAILABLE` + `RELOAD` (fixed, `z-index: 8` tra touch layer e overlay, safe-area, 44px, nessun `backdrop-filter`, animazione gated da `prefers-reduced-motion`). Offline/HTML non parsabile = nessun banner, nessun log; reload = hash uguali = banner assente
+- Verifiche headless (Chromium 390×844, `node server/src/index.js`): zero-score → `SYSTEM HALTED / SCORE 0 / BEST 0 / NO SCORE TO SAVE / PLAY AGAIN TO GET ON THE BOARD / RANKINGS / REBOOT`, 0 POST, localStorage vuoto, focus su `BODY`; run normale (200 punti) → nome precompilato `PLAYER` da `"PLAYER "`, **1 sola** POST 201 con `key`, modale aperta con riga `is-highlight`, form sostituito da `SAVED AS NEO TETRIS / RANK #1`, Enter/Space extra non rifanno la POST; reload → campo precompilato `Neo Tetris` senza spazi ai bordi; tag `BUILD CRUN-D` (hash `CrUN-dTo`), banner assente a hash uguali e presente (52px, x 12, y 8) dopo un HTML servito diverso, dismiss ok, scroll 844/844, zero righe in console
+- Test: `leaderboard.test.js` (17), `storage.test.js` (4), `buildInfo.test.js` (9) → **90 client**, lint pulito, build **244.83 kB JS (76.99 kB gzip) / 47.39 kB CSS (10.11 kB gzip)**
+
 ### Verifica finale
-- `npm test --prefix client` → 75/75
+- `npm test --prefix client` → 90/90
 - `npm test --prefix server` → 44/44
 - `npm run lint --prefix client` → nessun errore
-- `npm run build --prefix client` → build ok (**242.25 kB JS / 45.17 kB CSS**)
+- `npm run build --prefix client` → build ok (**244.83 kB JS / 47.39 kB CSS**)
 
 ## Layout
 
@@ -152,7 +161,8 @@
 
 ## Leaderboard
 
-- **End-to-end**: a game over il best locale viene scritto subito (`neotetris.best`), poi il form nome (precompilato con `neotetris.player`) invia `POST /api/scores` con la chiave idempotente della run; in caso di successo la riga creata viene salvata in locale, si chiede `GET /api/scores?limit=50` per calcolare il rank, il form diventa la conferma read-only e la modale rankings si apre da sola con la riga evidenziata
+- **End-to-end**: a game over il best locale viene scritto subito (`neotetris.best`), poi il form nome (precompilato con `neotetris.player` e normalizzato con `normalizeName`) invia `POST /api/scores` con la chiave idempotente della run; in caso di successo la riga creata viene salvata in locale, si chiede `GET /api/scores?limit=50` per calcolare il rank, il form diventa la conferma read-only e la modale rankings si apre da sola con la riga evidenziata
+- **Zero-score**: una run che finisce a 0 non è una run da salvare — `shouldOfferSave` (`leaderboard.js`) blocca form, POST, `saveLocalScore`, `saveBest`, badge `NEW RECORD` e apertura automatica della modale; al loro posto il blocco read-only `NO SCORE TO SAVE` / `PLAY AGAIN TO GET ON THE BOARD` e restano solo `RANKINGS` / `REBOOT`. Il server resta permissivo (`score >= 0`) per compatibilità API: la regola è una scelta di prodotto lato client
 - **Offline**: se il POST fallisce (rete, timeout, 429, 400) la run resta in `neotetris.scores` con id `local-…`; la UI mostra `SAVED LOCALLY` e `RETRY` rispedisce al server **con la stessa chiave** (una POST andata in timeout dopo l'insert torna 200 con la riga esistente), sostituendo la copia provvisoria
 - **Modale**: Top 10 con `mergeScores(server, local)`, badge `SERVER`/`LOCAL`, skeleton, stati vuoto/errore, RETRY/REFRESH; se il server non risponde si usa `fetchHealth()` per distinguere "offline" da "server in errore"
 - **Cache**: board merged in memoria per 30s (`CACHE_TTL_MS`), invalidata dopo un salvataggio e dai pulsanti di refresh

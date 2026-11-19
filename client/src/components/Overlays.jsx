@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ScoreValue } from './Fx.jsx';
 import { fetchScores, submitScore } from '../api.js';
-import { isRecord, mergeScores, normalizeName, rankOf } from '../leaderboard.js';
+import { isRecord, mergeScores, normalizeName, rankOf, shouldOfferSave } from '../leaderboard.js';
 import {
   loadBest,
   loadLocalScores,
@@ -39,6 +39,19 @@ import { makeRunKey } from '../runKey.js';
  * Every attempt carries the same idempotency key (`runKey.js`): a POST that
  * timed out after the insert answers with the existing row instead of adding a
  * second one.
+ *
+ * Zero-score rule: a run that ends on 0 is not offered for saving at all. The
+ * game-over screen renders a read-only "nothing to save" block instead of the
+ * form, so there is no input to focus, no submit path, no POST, no
+ * `saveLocalScore`, no `NEW RECORD` badge (and `saveBest` refuses 0 as well)
+ * and no automatic rankings — there is nothing new to highlight. RANKINGS and
+ * REBOOT stay available. The server deliberately stays permissive
+ * (`score >= 0` is accepted, for API compatibility): the rule is a client-side
+ * product decision kept in `shouldOfferSave` (`leaderboard.js`).
+ *
+ * The remembered name is seeded through the same `normalizeName` as the submit
+ * path, so a legacy `neotetris.player` value ("PLAYER ", double spaces,
+ * control characters) never shows up in the field the way it was stored.
  */
 
 function describeError(error) {
@@ -53,6 +66,7 @@ function describeError(error) {
 }
 
 export default function Overlays({
+  build = '',
   started,
   paused,
   gameOver,
@@ -64,7 +78,7 @@ export default function Overlays({
   onRankings,
   onSaved,
 }) {
-  const [name, setName] = useState(() => loadName());
+  const [name, setName] = useState(() => normalizeName(loadName()));
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
   const [saveRank, setSaveRank] = useState(null);
   const [saveError, setSaveError] = useState('');
@@ -91,22 +105,29 @@ export default function Overlays({
     };
   }, []);
 
-  const record = isRecord(score, best);
+  // A zero-score run has nothing to save, so none of the save machinery
+  // (best, badge, form, autofocus, submit) is allowed to run for it.
+  const saveable = shouldOfferSave(score);
+  const record = saveable && isRecord(score, best);
   const bestScore = Math.max(best?.score ?? 0, score);
 
   // Persist the new best as soon as the run ends — before the form is used.
   useEffect(() => {
-    if (!gameOver) return;
+    if (!gameOver || !saveable) return;
     if (isRecord(score, loadBest())) saveBest({ score, level, lines });
-  }, [gameOver, score, level, lines]);
+  }, [gameOver, saveable, score, level, lines]);
 
-  // Autofocus only on the game-over form, never on the start screen.
+  // Autofocus only on the game-over form, never on the start screen, and never
+  // at all when the form is not rendered (zero-score run).
   useEffect(() => {
-    if (gameOver) inputRef.current?.focus();
-  }, [gameOver]);
+    if (gameOver && saveable) inputRef.current?.focus();
+  }, [gameOver, saveable]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    // Defense in depth: the form is not mounted for a zero-score run, so this
+    // can only be reached by a stale synthetic submit.
+    if (!saveable) return;
     // `saved` is terminal for the run: the form is not rendered any more, but
     // a queued submit (double Enter, a synthesised click on the old button)
     // must still be a no-op. `busyRef` covers the in-flight window.
@@ -215,7 +236,17 @@ export default function Overlays({
           </span>
         </div>
 
-        {saved ? (
+        {!saveable ? (
+          /*
+           * Zero-score run: no form, no input, nothing focusable and no
+           * navigation. A short read-only line explains why; RANKINGS and
+           * REBOOT below stay available.
+           */
+          <div className="save-empty" role="status">
+            <span className="save-empty__line">No score to save</span>
+            <span className="save-empty__hint">Play again to get on the board</span>
+          </div>
+        ) : saved ? (
           /*
            * Read-only confirmation. It replaces the form for this run: the only
            * ways out are RANKINGS and REBOOT (a new run remounts Overlays, so
@@ -280,6 +311,7 @@ export default function Overlays({
       <div className="overlay start-overlay" role="dialog" aria-label="Start game">
         <h2 className="overlay-title overlay-title--brand">Neotetris</h2>
         <p className="subtitle">// 2084 //</p>
+        {build && <p className="build-tag">build {build}</p>}
         <button type="button" className="btn" onClick={onStart} aria-label="Initialize game">
           Initialize
         </button>

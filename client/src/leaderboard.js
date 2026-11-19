@@ -117,6 +117,19 @@ export function isRecord(score, best) {
   return value > (Number.isFinite(previous) ? previous : 0);
 }
 
+/**
+ * Product rule: a run that ends on 0 is not a score, so the client never
+ * offers to save it, never POSTs it, never writes it to `neotetris.best` /
+ * `neotetris.scores` and never opens the rankings for it. The server stays
+ * permissive on purpose (`score >= 0` is accepted for API compatibility):
+ * this is a client-side decision, kept in one pure place so the prompt, the
+ * submit path and the local persistence cannot disagree.
+ */
+export function shouldOfferSave(score) {
+  const value = Number(score);
+  return Number.isFinite(value) && value > 0;
+}
+
 /** Short `DD/MM` label (UTC, so a run never shifts day by timezone). */
 export function formatDate(iso) {
   const time = timeOf(iso);

@@ -123,10 +123,14 @@ export function loadBest() {
   };
 }
 
-/** Stores the best run (only call it when the run actually beats it). */
+/**
+ * Stores the best run. A zero (or negative) run is not a record — the save
+ * rule is `shouldOfferSave` in `leaderboard.js` — so it is never written here,
+ * not even as the very first "best".
+ */
 export function saveBest({ score, level, lines, date } = {}) {
   const value = Number(score);
-  if (!Number.isFinite(value)) return;
+  if (!Number.isFinite(value) || value <= 0) return;
   writeJSON(BEST_KEY, {
     score: Math.trunc(value),
     level: Number.isFinite(Number(level)) ? Math.trunc(Number(level)) : 1,

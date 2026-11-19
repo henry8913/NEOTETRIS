@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { LOCK_DELAY_MS, MAX_LOCK_RESETS, isResting, tickSpeed } from './tetris.js';
+import { assetName, buildTag, isStale, parseEntryAsset } from './buildInfo.js';
 import { initAll, reduceAll, fxDone } from './fx.js';
 import { audioState, initAudio, isMuted, playSound, setMuted } from './sound.js';
 import { press } from './input.js';
@@ -17,6 +18,34 @@ import Leaderboard from './components/Leaderboard.jsx';
 import './App.css';
 
 const CLEAR_SOUNDS = ['clear1', 'clear2', 'clear3', 'clear4'];
+
+/* Stale-tab detector: one re-read of the served HTML per 30s at most. */
+const BUILD_CHECK_MS = 30000;
+
+/**
+ * Entry asset this page is running. Vite hashes the filename on every build, so
+ * the filename doubles as the build id. The dev server serves `/src/main.jsx`
+ * (no hash): `assetName` returns null, the tag reads `dev` and the detector
+ * stays inert because the served HTML has no hashed entry either.
+ */
+function runningEntryAsset() {
+  try {
+    const candidates = [
+      document.querySelector('script[type="module"][src]')?.getAttribute('src'),
+      document.querySelector('script[src*="/assets/index-"]')?.getAttribute('src'),
+    ];
+    for (const candidate of candidates) {
+      const name = assetName(candidate);
+      if (name) return name;
+    }
+  } catch {
+    /* no DOM / blocked access: no tag and no detector */
+  }
+  return null;
+}
+
+const RUNNING_ASSET = runningEntryAsset();
+const BUILD_TAG = buildTag(RUNNING_ASSET);
 
 /* Keyboard map: every entry claims preventDefault (no page scroll, ever). */
 const KEY_MAP = {
@@ -67,6 +96,10 @@ export default function App() {
   const [rankingsOpen, setRankingsOpen] = useState(false);
   const [runId, setRunId] = useState(0);
   const [highlightId, setHighlightId] = useState(null);
+  // Stale build notice: derived from a `no-store` re-read of index.html, so a
+  // reload clears it by itself (the served entry then matches this page).
+  const [staleBuild, setStaleBuild] = useState(false);
+  const [buildNoticeDismissed, setBuildNoticeDismissed] = useState(false);
 
   const start = useCallback(() => {
     // A fresh Overlays (and therefore a fresh save form) for every run.
@@ -128,6 +161,47 @@ export default function App() {
       window.removeEventListener('keydown', gesture);
       window.removeEventListener('pageshow', wake);
       document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
+  /*
+   * Stale-tab detector. A tab opened before a deploy keeps running the old
+   * bundle, which looks exactly like a bug from the outside. On mount and
+   * whenever the page becomes visible again (visibilitychange / bfcache
+   * pageshow) we re-read the served index.html with `no-store`, diff its entry
+   * asset against ours and offer a RELOAD. Fire-and-forget: offline or an
+   * unparseable document is a silent no-op, checks are throttled to one per
+   * BUILD_CHECK_MS, and nothing here ever throws or logs.
+   */
+  useEffect(() => {
+    let alive = true;
+    let lastCheck = 0;
+
+    const check = async () => {
+      const now = Date.now();
+      if (now - lastCheck < BUILD_CHECK_MS) return;
+      lastCheck = now;
+      try {
+        const response = await fetch('/', { cache: 'no-store' });
+        if (!response.ok) return;
+        const served = parseEntryAsset(await response.text());
+        if (alive && isStale(RUNNING_ASSET, served)) setStaleBuild(true);
+      } catch {
+        /* offline / blocked: stay silent, no banner, no retry storm */
+      }
+    };
+
+    const onVisible = () => {
+      if (!document.hidden) check();
+    };
+
+    check();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    return () => {
+      alive = false;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
     };
   }, []);
 
@@ -297,6 +371,7 @@ export default function App() {
 
         <Overlays
           key={`run-${runId}`}
+          build={BUILD_TAG}
           started={started}
           paused={paused}
           gameOver={gameOver}
@@ -321,6 +396,34 @@ export default function App() {
       onAnimationEnd={endShake}
     >
       <Background />
+
+      {/*
+       * Newer build on the server (tab opened before a deploy). Fixed, above
+       * the touch layer (z 5) and below the overlays (z 10), with its own
+       * safe-area insets; dismissible for this session.
+       */}
+      {staleBuild && !buildNoticeDismissed && (
+        <div className="update-banner" role="status" aria-live="polite">
+          <span className="update-banner__text">New version available</span>
+          <button
+            type="button"
+            className="update-banner__reload"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+          <button
+            type="button"
+            className="update-banner__close"
+            aria-label="Dismiss update notice"
+            onClick={() => setBuildNoticeDismissed(true)}
+          >
+            <svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+              <path d="M3 3l6 6M9 3l-6 6" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {wide ? (
         <main className="game-area game-area--wide">
