@@ -247,3 +247,43 @@ On desktop and landscape a visible mute button sits in the right rail (always av
 - [x] Local high score persistence (name, personal best, recent runs)
 - [ ] Server-side player profiles / personal bests
 - [ ] Gamepad support
+
+## Deploy
+
+Produzione: **https://neotetris.henrydev.it**
+
+Un solo container (`neo-tetris`) su porta interna **3001**: Express serve sia le API sia la build Vite della SPA, quindi in produzione non gira Vite e `VITE_API_URL` resta vuoto (stessa origine). MongoDB gira in un container separato (`neo-tetris-mongo`) con volume persistente.
+
+L'immagine è multi-stage (`Dockerfile`): stage `client` per `npm ci` + `vite build`, stage `runtime` con solo le dipendenze di produzione del server. Lo stack è descritto in `docker-compose.yml` (`app` + `mongo` + volume `mongo_data`), con `restart: unless-stopped`.
+
+### Nginx Proxy Manager
+
+Proxy Host verso il container, con Let's Encrypt:
+
+| Campo | Valore |
+|-------|--------|
+| Domain Names | `neotetris.henrydev.it` |
+| Scheme | `http` |
+| Forward Hostname / IP | `neo-tetris` |
+| Forward Port | `3001` |
+| Block Common Exploits | attivo |
+| Websockets Support | **off** (non servono) |
+| SSL | Let's Encrypt + **Force SSL** |
+
+Il container `app` è collegato alla rete esterna `npm_default` (dove vive Nginx Proxy Manager); `mongo` resta sulla sola rete interna e non è raggiungibile dal proxy. La porta **5173 è solo dev** (Vite): non usarla in produzione.
+
+### Deploy automatico
+
+Ogni push su `main` esegue `.github/workflows/deploy.yml`: SSH su `158.180.235.83`, `git pull` in `/var/www/NEOTETRIS`, `docker compose up --build -d --remove-orphans`. Richiede il secret `SSH_PRIVATE_KEY`; i deploy sono serializzati (`concurrency: deploy-production`), quindi non si sovrappongono.
+
+### Locale
+
+```bash
+docker network inspect npm_default >/dev/null 2>&1 || docker network create npm_default
+docker compose up --build -d    # → http://localhost:3001
+docker compose ps               # app e mongo devono risultare "healthy"
+docker compose logs -f app
+docker compose down             # aggiungi -v per cancellare anche i punteggi (volume mongo_data)
+```
+
+Nessun `env_file` da preparare: le variabili (`MONGO_URI`, `CORS_ORIGIN`, `PORT`) sono già nel compose.

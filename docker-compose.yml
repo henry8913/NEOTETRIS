@@ -1,0 +1,56 @@
+# NEOTETRIS — stack di produzione
+#
+# Un solo container applicativo (`neo-tetris`): Express serve sia le API
+# (`/api/*`) sia la build Vite della SPA (`client/dist`), quindi non c'è
+# nessun server statico separato da mettere davanti.
+#
+# Avvio locale:  docker compose up --build -d   →  http://localhost:3001
+# Richiede la rete esterna `npm_default` anche in locale:
+#   docker network inspect npm_default >/dev/null 2>&1 || docker network create npm_default
+
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+    container_name: neo-tetris
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # Nessun env_file: lo stack deve partire con zero setup locale.
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      MONGO_URI: mongodb://mongo:27017/tetris
+      CORS_ORIGIN: https://neotetris.henrydev.it
+    ports:
+      - "3001:3001"
+    networks:
+      - default
+      - npm_default
+
+  mongo:
+    image: mongo:7
+    container_name: neo-tetris-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping')\" | grep -q 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Solo sulla rete interna: il database non deve essere raggiungibile dal proxy.
+    networks:
+      - default
+
+volumes:
+  mongo_data:
+
+networks:
+  # Sul server Oracle Nginx Proxy Manager è attaccato a `npm_default`: così
+  # raggiunge l'app per nome container (`neo-tetris`, porta 3001) senza
+  # esporre altre porte.
+  npm_default:
+    external: true

@@ -1,0 +1,26 @@
+# Dependencies — reinstalled inside the image (npm ci)
+**/node_modules
+
+# Build output — the client stage produces its own
+client/dist
+
+# VCS / CI / agent metadata
+.git
+.github
+.opencode
+.agents
+skills-lock.json
+progress.md
+screenshots/
+
+# Local env & secrets (compose supplies the real values)
+.env
+.env.*
+
+# OS / editor / log noise
+.DS_Store
+**/.DS_Store
+*.log
+npm-debug.log*
+.vscode
+.idea
