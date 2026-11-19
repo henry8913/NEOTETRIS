@@ -579,19 +579,39 @@ button {
 
 /* Start screen: a slow light band slides through the brand gradient.
    Longhands only: the `background` shorthand would reset `background-clip`
-   back to border-box and turn the transparent text into a solid bar. */
+   back to border-box and turn the transparent text into a solid bar.
+
+   Geometry matters here. The type is sized from the frame (`cqw`, the board is
+   the query container) so the wordmark can never outgrow the overlay's content
+   box, and the gradient is **two identical tiles** (`background-size: 200%`)
+   whose animation only travels between 0% and 100%. Both extremes keep the
+   image perfectly over the element, so every glyph owns a background pixel on
+   every frame. The previous version moved a 300% image to `300%`, which slid
+   the image off the word: with `-webkit-text-fill-color: transparent` the
+   glyphs it no longer covered were *erased*, and a phone screenshot caught the
+   title mid-cycle as "NE|". Two identical tiles also make the loop seamless
+   (the window lands on the same pattern at 100% as at 0%), and the
+   `background-color` fallback means a glyph can never paint as nothing. */
 .overlay-title--brand {
+  /* Container-relative size, clamped: ~8.6% of the frame per side keeps the
+     nine glyphs at ~70% of the available width on the narrowest phone. */
+  font-size: clamp(15px, 8.6cqw, 32px);
+  letter-spacing: clamp(0.5px, 0.55cqw, 3px);
+  max-width: 100%;
+  white-space: nowrap;
+  background-color: var(--neon-cyan);
   background-image: linear-gradient(
     100deg,
     var(--neon-cyan) 0%,
-    #ffffff 18%,
-    var(--neon-magenta) 36%,
-    var(--neon-cyan) 54%,
-    #ffffff 72%,
+    #ffffff 17%,
+    var(--neon-magenta) 33%,
+    var(--neon-cyan) 50%,
+    #ffffff 67%,
+    var(--neon-magenta) 83%,
     var(--neon-cyan) 100%
   );
-  background-size: 300% 100%;
-  background-repeat: no-repeat;
+  background-size: 200% 100%;
+  background-repeat: repeat;
   background-position: 0% 50%;
   /* Re-declared after the image so the clip can never be lost. */
   -webkit-background-clip: text;
@@ -605,9 +625,10 @@ button {
   }
 }
 
+/* 0% → 100% only: the image stays over the word for the whole cycle. */
 @keyframes title-shimmer {
   0% { background-position: 0% 50%; }
-  100% { background-position: 300% 50%; }
+  100% { background-position: 100% 50%; }
 }
 
 /* Browsers without text clipping: drop the gradient and paint real glyphs. */
@@ -759,12 +780,23 @@ button {
   text-shadow: 0 0 12px rgba(255, 111, 212, 0.45);
 }
 
+/*
+ * The score is the hero, and it must never be squeezed: as a flex item of the
+ * column overlay it used to be allowed to shrink (`flex: 0 1 auto`), so on a
+ * short overlay pass the box came out 8px shorter than its own content
+ * (`scrollHeight 86` vs `clientHeight 78`) and the digits were shaved at the
+ * bottom. `flex: 0 0 auto` + `min-height: min-content` pin it to its content.
+ */
 .final-block {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0;
+  min-height: min-content;
   max-width: 100%;
+  overflow: visible;
 }
 
 .final-label {
@@ -776,11 +808,19 @@ button {
   color: var(--neon-cyan);
 }
 
+/*
+ * `line-height: 1` is kept for the look (the digit box is exactly 1em), but
+ * Orbitron's ascent/descent are ~1.14em, so the ink hung 0.14em below the
+ * box — that is the 8px the block reported as scroll overflow. A bottom pad of
+ * the same 0.14em makes the padding box contain the glyphs again
+ * (`scrollHeight === clientHeight`, verified 1/4/6-digit), and it is invisible.
+ */
 .final-score {
   font-family: 'Orbitron', sans-serif;
   font-size: clamp(34px, 22cqw, 64px);
   font-weight: 900;
   line-height: 1;
+  padding-bottom: 0.14em;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   color: var(--neon-cyan);
@@ -937,9 +977,11 @@ button {
   justify-content: center;
   gap: 1px;
   width: min(100%, 240px);
-  min-height: 44px;
+  /* Absorbs a stray tap: this block is static (no handler), so a finger that
+     lands here does nothing at all. 56px also covers two lines of type. */
+  min-height: 56px;
   margin: 0;
-  padding: clamp(4px, 1.4cqw, 8px) clamp(6px, 2cqw, 12px);
+  padding: clamp(6px, 1.8cqw, 10px) clamp(6px, 2cqw, 12px);
   font-family: 'Orbitron', sans-serif;
   font-size: clamp(10px, 2.8cqw, 12px);
   font-weight: 700;
@@ -1011,11 +1053,20 @@ button {
   color: #9292b8;
 }
 
+/*
+ * RANKINGS + REBOOT. The `margin-top` is a real dead band, not decoration:
+ * after a save the confirmation block sits where the SAVE SCORE button was,
+ * and Chrome's touch adjustment happily snapped a tap on those old
+ * coordinates onto REBOOT, restarting the run and wiping the confirmation.
+ * 18px of margin + the overlay gap (6px) is the separation; nothing focusable
+ * lives there.
+ */
 .overlay-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: clamp(4px, 1.6cqw, 10px);
   width: min(100%, 240px);
+  margin-top: clamp(18px, 4.6cqw, 24px);
 }
 
 /* RANKINGS + REBOOT: full-width tracks, so both keep the 44px target even
@@ -2609,11 +2660,6 @@ button {
    list scrolls, and only inside the card: the page still never does.
    ══════════════════════════════════════════════════════════════ */
 
-@keyframes lb-in {
-  0% { opacity: 0; scale: 0.96; }
-  100% { opacity: 1; scale: 1; }
-}
-
 @keyframes lb-pulse {
   0%, 100% { box-shadow: 0 0 0 rgba(57, 255, 20, 0); }
   50% { box-shadow: 0 0 18px rgba(57, 255, 20, 0.45); }
@@ -2638,11 +2684,19 @@ button {
     max(12px, env(safe-area-inset-bottom, 0px))
     max(12px, env(safe-area-inset-left, 0px));
   background: rgba(3, 3, 10, 0.82);
-  backdrop-filter: blur(6px);
   overflow: hidden;
   animation: overlay-in 180ms ease-out;
 }
 
+/*
+ * The card is opaque from the first frame: `background-color` carries the
+ * surface (0.96 alpha over an already dimmed backdrop) and the gradient is
+ * only a highlight on top. It used to be an `opacity` animation over a
+ * gradient-only surface, so ~180ms after opening the card was still
+ * translucent and the game-over text showed through it.
+ * The entry animation is `scale` only now — a transform cannot make the card
+ * see-through — and no `backdrop-filter` is used anywhere in the dialog.
+ */
 .lb-modal {
   position: relative;
   display: flex;
@@ -2652,9 +2706,8 @@ button {
   max-height: 100%;
   min-height: 0;
   padding: clamp(10px, 2.4vw, 18px);
-  background:
-    radial-gradient(120% 60% at 50% 0%, rgba(0, 240, 255, 0.1), transparent 70%),
-    linear-gradient(180deg, rgba(12, 12, 30, 0.98), rgba(5, 5, 12, 0.99));
+  background-color: rgba(6, 9, 22, 0.96);
+  background-image: radial-gradient(120% 60% at 50% 0%, rgba(0, 240, 255, 0.1), transparent 70%);
   border: 1px solid var(--neon-cyan);
   border-radius: 8px;
   box-shadow:
@@ -2662,6 +2715,11 @@ button {
     inset 0 0 40px rgba(0, 240, 255, 0.05);
   overflow: hidden;
   animation: lb-in 220ms cubic-bezier(0.2, 1.1, 0.4, 1) both;
+}
+
+@keyframes lb-in {
+  0% { scale: 0.96; }
+  100% { scale: 1; }
 }
 
 .lb-head {
