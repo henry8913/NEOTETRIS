@@ -1,160 +1,91 @@
-import { useReducer, useEffect, useCallback } from 'react';
-import {
-  BOARD_ROWS, BOARD_COLS, COLORS, LOCK_DELAY_MS, MAX_LOCK_RESETS,
-  getShape, ghostY, isResting, tickSpeed,
-} from './tetris.js';
-import { initialState, reducer } from './game.js';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { LOCK_DELAY_MS, MAX_LOCK_RESETS, isResting, tickSpeed } from './tetris.js';
+import { initAll, reduceAll, fxDone } from './fx.js';
+import { initAudio, isMuted, playSound, setMuted } from './sound.js';
+import { press } from './input.js';
+import { useWideLayout } from './layout.js';
+import Background from './components/Background.jsx';
+import { BoardStage, ClearFlash } from './components/Board.jsx';
+import { DropRipple, LevelWash, Shockwave, SweepFx } from './components/Fx.jsx';
+import StatCard from './components/StatCard.jsx';
+import SidePanel from './components/SidePanel.jsx';
+import ControlsRail from './components/ControlsRail.jsx';
+import MobileHud from './components/MobileHud.jsx';
+import TouchControls from './components/TouchControls.jsx';
+import Overlays from './components/Overlays.jsx';
 import './App.css';
 
-function Cell({ type }) {
-  if (type === 'ghost') {
-    return <div className="cell ghost-cell" />;
-  }
-  const glow = type
-    ? `0 0 6px ${COLORS[type]}40, 0 0 12px ${COLORS[type]}20, inset 0 0 6px ${COLORS[type]}20`
-    : '';
-  return (
-    <div
-      className="cell"
-      style={type ? { backgroundColor: COLORS[type], boxShadow: glow } : {}}
-    />
-  );
-}
+const CLEAR_SOUNDS = ['clear1', 'clear2', 'clear3', 'clear4'];
 
-function Board({ board, piece }) {
-  const display = board.map(row => [...row]);
+/* Keyboard map: every entry claims preventDefault (no page scroll, ever). */
+const KEY_MAP = {
+  ArrowLeft: { action: { type: 'MOVE', dx: -1, dy: 0 }, sound: 'move' },
+  ArrowRight: { action: { type: 'MOVE', dx: 1, dy: 0 }, sound: 'move' },
+  ArrowDown: { action: { type: 'MOVE', dx: 0, dy: 1 }, sound: 'move' },
+  ArrowUp: { action: { type: 'ROTATE', dir: 1 }, sound: 'rotate' },
+  x: { action: { type: 'ROTATE', dir: 1 }, sound: 'rotate' },
+  z: { action: { type: 'ROTATE', dir: -1 }, sound: 'rotate' },
+  Shift: { action: { type: 'HOLD' }, sound: 'hold', once: true },
+  c: { action: { type: 'HOLD' }, sound: 'hold', once: true },
+  p: { action: { type: 'TOGGLE_PAUSE' }, once: true },
+  Escape: { action: { type: 'TOGGLE_PAUSE' }, once: true },
+};
 
-  if (piece) {
-    const shape = getShape(piece.type, piece.rotation);
-    for (let r = 0; r < shape.length; r++) {
-      for (let c = 0; c < shape[r].length; c++) {
-        if (!shape[r][c]) continue;
-        const py = piece.y + r;
-        const px = piece.x + c;
-        if (py >= 0 && py < BOARD_ROWS && px >= 0 && px < BOARD_COLS) {
-          display[py][px] = piece.type;
-        }
-      }
-    }
-    const gy = ghostY(board, piece.type, piece.x, piece.y, piece.rotation);
-    const ghostShape = getShape(piece.type, piece.rotation);
-    for (let r = 0; r < ghostShape.length; r++) {
-      for (let c = 0; c < ghostShape[r].length; c++) {
-        if (!ghostShape[r][c]) continue;
-        const py = gy + r, px = piece.x + c;
-        if (py >= 0 && py < BOARD_ROWS && px >= 0 && px < BOARD_COLS) {
-          if (!display[py][px]) display[py][px] = 'ghost';
-        }
-      }
-    }
-  }
+const GAME_KEYS = new Set([...Object.keys(KEY_MAP), 'Enter', ' ']);
 
-  return (
-    <div className="board">
-      {display.map((row, ri) =>
-        row.map((cell, ci) => <Cell key={`${ri}-${ci}`} type={cell} />)
-      )}
-    </div>
-  );
-}
+const isTypingTarget = (el) =>
+  Boolean(el) &&
+  (el.isContentEditable === true ||
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
 
-function NextPiece({ type, size = 11, dimmed = false }) {
-  if (!type) return null;
-  const shape = getShape(type, 0);
-  const cell = `${size}px`;
-  return (
-    <div
-      className={`next-piece${dimmed ? ' dimmed' : ''}`}
-      style={{ '--cell': cell, gridTemplateColumns: `repeat(${shape.length}, ${cell})` }}
-    >
-      {shape.map((row, ri) =>
-        row.map((c, ci) => (
-          <div
-            key={`${ri}-${ci}`}
-            className="preview-cell"
-            style={c ? { backgroundColor: COLORS[type] } : {}}
-          />
-        ))
-      )}
-    </div>
-  );
-}
-
-const NEON_COLORS = [
-  'var(--neon-cyan)',
-  'var(--neon-magenta)',
-  'var(--neon-green)',
-  'var(--neon-yellow)',
-  'var(--neon-purple)',
-];
-
-function createParticles() {
-  return Array.from({ length: 22 }, (_, i) => ({
-    id: i,
-    x: `${Math.random() * 100}%`,
-    delay: `${Math.random() * 12}s`,
-    duration: `${10 + Math.random() * 14}s`,
-    size: `${2 + Math.random() * 2.5}px`,
-    color: NEON_COLORS[Math.floor(Math.random() * NEON_COLORS.length)],
-    drift: `${-30 + Math.random() * 60}px`,
-  }));
-}
-
-function createStreams() {
-  const positions = [1, 3.5, 96.5, 99];
-  return positions.map((left, i) => ({
-    id: i,
-    left: `${left}%`,
-    delay: `${i * 2.5}s`,
-    duration: `${2.5 + Math.random() * 2}s`,
-  }));
-}
-
-const PARTICLES = createParticles();
-const STREAMS = createStreams();
-
-function BackgroundParticles() {
-  return (
-    <div className="bg-particles" aria-hidden="true">
-      {PARTICLES.map((p) => (
-        <span
-          key={p.id}
-          className="particle"
-          style={{
-            '--x': p.x,
-            '--delay': p.delay,
-            '--duration': p.duration,
-            '--size': p.size,
-            '--color': p.color,
-            '--drift': p.drift,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function DataStreams() {
-  return (
-    <div className="data-streams" aria-hidden="true">
-      {STREAMS.map((s) => (
-        <div
-          key={s.id}
-          className="data-stream"
-          style={{
-            '--left': s.left,
-            '--delay': s.delay,
-            '--duration': s.duration,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
+/**
+ * A focused control owns Enter/Space: the browser turns the key into a `click`
+ * on the button, and stealing it would make every focusable control (HOLD,
+ * MUTE, the rail buttons, the overlays) unreachable from the keyboard.
+ */
+const isInteractiveTarget = (el) =>
+  Boolean(el) &&
+  (el.isContentEditable === true ||
+    ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName) ||
+    (typeof el.closest === 'function' && el.closest('button, a, [role="button"]') !== null));
 
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, null, initialState);
-  const { started, gameOver, paused, board, piece, lockResets, level } = state;
+  const [state, dispatch] = useReducer(reduceAll, null, initAll);
+  const {
+    started, gameOver, paused, board, piece, lockResets, level, lines,
+    score, combo, holdType, canHold, nextQueue, lastClear, fx,
+  } = state;
+
+  const [muted, setMutedState] = useState(isMuted);
+  const history = useRef({ clearId: 0, level: 1, gameOver: false, started: false });
+  // Desktop / landscape phones get the three-column shell, everything else the
+  // compact one. Only the active composition is mounted (no hidden buttons).
+  const wide = useWideLayout();
+
+  const start = useCallback(() => dispatch({ type: 'START' }), []);
+  const resume = useCallback(() => dispatch({ type: 'TOGGLE_PAUSE' }), []);
+  const done = useCallback((key) => dispatch(fxDone(key)), []);
+  const holdPiece = useCallback(() => press(dispatch, { type: 'HOLD' }, 'hold'), []);
+  const mutedToggle = useCallback(() => {
+    const next = !muted;
+    setMutedState(next);
+    setMuted(next);
+    if (!next) {
+      initAudio();
+      playSound('ui-click');
+    }
+  }, [muted]);
+
+  // Unlock WebAudio on the first real gesture (never at load time).
+  useEffect(() => {
+    const unlock = () => initAudio();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
 
   // Gravity: only runs while the game is live and not paused.
   useEffect(() => {
@@ -164,8 +95,8 @@ export default function App() {
   }, [started, gameOver, paused, level]);
 
   // Lock delay: a grounded piece locks after LOCK_DELAY_MS. Every successful
-  // move/rotation of a grounded piece restarts the timer (bounded by
-  // MAX_LOCK_RESETS); once the budget is spent the lock is immediate.
+  // grounded move/rotation restarts the timer (bounded by MAX_LOCK_RESETS);
+  // once the budget is spent the lock is immediate.
   useEffect(() => {
     if (!started || gameOver || paused || !piece) return undefined;
     if (!isResting(board, piece)) return undefined;
@@ -177,158 +108,228 @@ export default function App() {
     return () => clearTimeout(id);
   }, [started, gameOver, paused, board, piece, lockResets]);
 
+  // Audio only: every sound is inferred from a change of the pure game state.
+  useEffect(() => {
+    const before = history.current;
+
+    if (started && lastClear.id > before.clearId) {
+      if (lastClear.count > 0) {
+        // Perfect and TETRIS get their own signature, the rest keep the ladder.
+        if (lastClear.perfect) playSound('perfect');
+        else if (lastClear.count >= 4) playSound('tetris');
+        else playSound(CLEAR_SOUNDS[Math.min(lastClear.count, 4) - 1]);
+      } else {
+        playSound('lock');
+      }
+    }
+    if (started && level > before.level) playSound('levelup');
+    if (gameOver && !before.gameOver) playSound('gameover');
+    if (started && !before.started) playSound('start');
+
+    history.current = { clearId: lastClear.id, level, gameOver, started };
+  }, [started, gameOver, level, lastClear]);
+
+  /*
+   * Level intensity for the ambient layer. Written straight to the document
+   * element (no state, no render) so the body grid can pick it up too; capped
+   * at 10 so high levels never become a strobe. The playfield reads the same
+   * value from its inline `--level`.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--level', String(Math.min(Math.max(level, 1), 10)));
+    return () => root.style.removeProperty('--level');
+  }, [level]);
+
   const onKeyDown = useCallback((e) => {
-    if (e.key === 'Enter') {
-      if (!started || gameOver) {
-        e.preventDefault();
-        dispatch({ type: 'START' });
+    if (isTypingTarget(e.target)) return;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    initAudio();
+
+    // A focused control keeps Enter/Space: let the browser fire the `click`.
+    if ((key === 'Enter' || key === ' ') && isInteractiveTarget(e.target)) return;
+
+    // Claim the game keys first: Space/arrows must never scroll the page, not
+    // even on the start screen or after a game over.
+    if (GAME_KEYS.has(key)) e.preventDefault();
+
+    if (key === 'm') {
+      if (!e.repeat) mutedToggle();
+      return;
+    }
+
+    const idle = !started || gameOver;
+
+    if (key === 'Enter' || key === ' ') {
+      if (idle) {
+        if (!e.repeat) dispatch({ type: 'START' });
+      } else if (key === ' ' && !e.repeat) {
+        dispatch({ type: 'FX_SHAKE', kind: 'light' });
+        dispatch({ type: 'HARD_DROP' });
       }
       return;
     }
-    if (!started || gameOver) return;
+    if (idle) return;
 
-    switch (e.key) {
-      case 'ArrowLeft':
-        e.preventDefault();
-        dispatch({ type: 'MOVE', dx: -1, dy: 0 });
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        dispatch({ type: 'MOVE', dx: 1, dy: 0 });
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        dispatch({ type: 'MOVE', dx: 0, dy: 1 });
-        break;
-      case 'ArrowUp':
-      case 'x':
-      case 'X':
-        e.preventDefault();
-        dispatch({ type: 'ROTATE', dir: 1 });
-        break;
-      case 'z':
-      case 'Z':
-        e.preventDefault();
-        dispatch({ type: 'ROTATE', dir: -1 });
-        break;
-      case ' ':
-        e.preventDefault();
-        dispatch({ type: 'HARD_DROP' });
-        break;
-      case 'Shift':
-      case 'c':
-      case 'C':
-        if (e.repeat) return;
-        e.preventDefault();
-        dispatch({ type: 'HOLD' });
-        break;
-      case 'p':
-      case 'P':
-      case 'Escape':
-        if (e.repeat) return;
-        e.preventDefault();
-        dispatch({ type: 'TOGGLE_PAUSE' });
-        break;
-      default:
-        break;
-    }
-  }, [started, gameOver]);
+    const hit = KEY_MAP[key];
+    if (!hit || (hit.once && e.repeat)) return;
+    if (hit.sound) playSound(hit.sound);
+    dispatch(hit.action);
+  }, [started, gameOver, mutedToggle]);
 
   useEffect(() => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onKeyDown]);
 
-  // Single pointer path: onTouchStart + onMouseDown fired twice on some
-  // devices, onPointerDown fires once.
-  const press = (action) => (e) => {
-    e.preventDefault();
-    dispatch(action);
-  };
+  const endShake = useCallback((e) => {
+    if (e.target === e.currentTarget) done('shake');
+  }, [done]);
 
-  const speedMs = tickSpeed(level);
+  const idle = !started || gameOver;
+  // Hold is a real button in both compositions: disabled while the rules would
+  // ignore it (start screen, game over, paused).
+  const holdDisabled = idle || paused;
+
+  /* The playfield is identical in both compositions; only its grid cell moves. */
+  const stage = (
+    <div className="board-wrapper">
+      <BoardStage board={board} piece={started ? piece : null}>
+        {fx.intro && <SweepFx key={`sweep-${fx.intro.id}`} onDone={() => done('intro')} />}
+
+        {fx.drop && (
+          <DropRipple
+            key={`drop-${fx.drop.id}`}
+            x={fx.drop.x}
+            y={fx.drop.y}
+            color={fx.drop.color}
+            onDone={() => done('drop')}
+          />
+        )}
+
+        {combo >= 2 && (
+          <div
+            className="combo-badge"
+            key={combo}
+            style={{ '--combo': Math.min(combo, 8) }}
+            aria-hidden="true"
+          >
+            <span className="combo-badge__main">×{combo}</span>
+            {combo >= 4 && (
+              <span className="combo-badge__sub">{combo >= 6 ? 'Unstoppable' : 'On fire'}</span>
+            )}
+          </div>
+        )}
+
+        {fx.flash && (
+          <ClearFlash
+            key={fx.flash.id}
+            count={fx.flash.count}
+            rows={fx.flash.rows}
+            colors={fx.flash.colors}
+            perfect={fx.flash.perfect}
+            onDone={() => done('flash')}
+          />
+        )}
+
+        <Overlays
+          started={started}
+          paused={paused}
+          gameOver={gameOver}
+          score={score}
+          onStart={start}
+          onResume={resume}
+        />
+      </BoardStage>
+    </div>
+  );
 
   return (
-    <div className="tetris">
-      <DataStreams />
-      <BackgroundParticles />
-      <header className="top-bar">
-        <div className="stat"><span className="stat-label">Score</span><span className="stat-value">{state.score}</span></div>
-        <div className="stat"><span className="stat-label">Level</span><span className="stat-value">{state.level}</span></div>
-        <div className="stat"><span className="stat-label">Lines</span><span className="stat-value">{state.lines}</span></div>
-        <div className="stat hold-stat">
-          <span className="stat-label">Hold</span>
-          {state.holdType
-            ? <NextPiece type={state.holdType} dimmed={!state.canHold} />
-            : <span className="hold-empty" />}
-        </div>
-        <div className="stat next-stat">
-          <span className="stat-label">Next</span>
-          <div className="next-queue">
-            {state.nextQueue.map((type, i) => (
-              <NextPiece key={i} type={type} size={i === 0 ? 9 : 7} />
-            ))}
-          </div>
-        </div>
-      </header>
+    <div
+      className={`tetris${fx.shake ? ` shake-${fx.shake.kind}` : ''}${fx.intro ? ' is-intro' : ''}${
+        gameOver ? ' is-over' : ''
+      }`}
+      style={{ '--level': Math.min(Math.max(level, 1), 10) }}
+      onAnimationEnd={endShake}
+    >
+      <Background />
 
-      <div className="game-area">
-        <div className="board-wrapper">
-          {!state.started && (
-            <div className="overlay">
-              <h2>NEOTETRIS</h2>
-              <p className="subtitle">// 2084 //</p>
-              <button className="btn" onClick={() => dispatch({ type: 'START' })}>Initialize</button>
-            </div>
-          )}
-          {state.gameOver && (
-            <div className="overlay game-over-overlay">
-              <h2>System Halted</h2>
-              <p className="final-score">{state.score}</p>
-              <div className="game-over-stats">
-                <div className="game-over-stat">
-                  <span className="stat-label">Level</span>
-                  <span className="stat-value">{state.level}</span>
-                </div>
-                <div className="game-over-stat">
-                  <span className="stat-label">Lines</span>
-                  <span className="stat-value">{state.lines}</span>
-                </div>
-              </div>
-              <button className="btn" onClick={() => dispatch({ type: 'START' })}>Reboot</button>
-            </div>
-          )}
-          {state.started && !state.gameOver && paused && (
-            <div className="overlay pause-overlay">
-              <h2>Paused</h2>
-              <p className="subtitle">Press P to resume</p>
-              <button className="btn" onClick={() => dispatch({ type: 'TOGGLE_PAUSE' })}>Resume</button>
-            </div>
-          )}
-          <Board board={board} piece={piece} />
-        </div>
-      </div>
+      {wide ? (
+        <main className="game-area game-area--wide">
+          <header className="top-bar">
+            <StatCard label="Score" value={score} live animated />
+            <StatCard label="Level" value={level} />
+            <StatCard label="Lines" value={lines} />
+          </header>
 
-      {started && !gameOver && (
-        <div className="controls">
-          <div className="ctrl-row">
-            <button className="ctrl-btn" aria-label="Move left" onPointerDown={press({ type: 'MOVE', dx: -1, dy: 0 })}>◀</button>
-            <button className="ctrl-btn" aria-label="Rotate" onPointerDown={press({ type: 'ROTATE', dir: 1 })}>↻</button>
-            <button className="ctrl-btn" aria-label="Move right" onPointerDown={press({ type: 'MOVE', dx: 1, dy: 0 })}>▶</button>
-            <button className="ctrl-btn ctrl-hold" aria-label="Hold piece" onPointerDown={press({ type: 'HOLD' })}>HOLD</button>
+          <div className="rail rail-left">
+            <ControlsRail dispatch={dispatch} disabled={idle} paused={paused} />
           </div>
-          <div className="ctrl-row">
-            <button className="ctrl-btn" aria-label={paused ? 'Resume' : 'Pause'} onPointerDown={press({ type: 'TOGGLE_PAUSE' })}>{paused ? '▶' : '❚❚'}</button>
-            <button className="ctrl-btn" aria-label="Soft drop" onPointerDown={press({ type: 'MOVE', dx: 0, dy: 1 })}>▼</button>
-            <button className="ctrl-btn ctrl-wide" aria-label="Hard drop" onPointerDown={press({ type: 'HARD_DROP' })}>DROP</button>
+
+          {stage}
+
+          <div className="rail rail-right">
+            <SidePanel
+              holdType={holdType}
+              canHold={canHold}
+              nextQueue={nextQueue}
+              muted={muted}
+              score={score}
+              level={level}
+              lines={lines}
+              onToggleMute={mutedToggle}
+              onHold={holdPiece}
+              disabled={holdDisabled}
+              speedMs={tickSpeed(level)}
+            />
           </div>
+        </main>
+      ) : (
+        <>
+          <MobileHud
+            score={score}
+            level={level}
+            lines={lines}
+            holdType={holdType}
+            canHold={canHold}
+            nextQueue={nextQueue}
+            muted={muted}
+            onToggleMute={mutedToggle}
+            onHold={holdPiece}
+            disabled={holdDisabled}
+          />
+
+          <main className="game-area">{stage}</main>
+
+          <footer className="dock">
+            <TouchControls dispatch={dispatch} disabled={idle} paused={paused} />
+          </footer>
+        </>
+      )}
+
+      {fx.banner && (
+        <div
+          className="level-banner"
+          key={fx.banner.id}
+          aria-hidden="true"
+          onAnimationEnd={() => done('banner')}
+        >
+          Level {fx.banner.level}
         </div>
       )}
 
-      {started && (
-        <div className="speed-indicator">
-          Speed: {speedMs}ms | Level {level}
-        </div>
+      {fx.wash && <LevelWash key={`wash-${fx.wash.id}`} onDone={() => done('wash')} />}
+
+      {fx.shock && (
+        <Shockwave
+          key={`shock-${fx.shock.id}`}
+          perfect={fx.shock.perfect}
+          onDone={() => done('shock')}
+        />
+      )}
+
+      {fx.intro && (
+        <span key={`flash-${fx.intro.id}`} className="fx-start" aria-hidden="true" />
       )}
     </div>
   );

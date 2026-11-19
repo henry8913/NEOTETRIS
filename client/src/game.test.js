@@ -265,3 +265,103 @@ test('takeNext refills the bag with complete 7-bags', () => {
   }
   assert.ok(bag.length >= 7);
 });
+
+/** Board with rows 18..19 filled up to `colsFrom`, plus an O about to drop. */
+function rigged(state, { from = 18, colsFrom = 2 } = {}) {
+  const board = createBoard();
+  for (let r = from; r < BOARD_ROWS; r++) {
+    for (let c = colsFrom; c < BOARD_COLS; c++) board[r][c] = 'X';
+  }
+  return { ...state, board, piece: { type: 'O', x: 0, y: 0, rotation: 0 } };
+}
+
+test('lastClear reports the absolute rows removed and advances its id', () => {
+  const base = started();
+  const next = reducer(rigged(base), { type: 'HARD_DROP' });
+
+  assert.equal(next.lastClear.count, 2);
+  assert.deepEqual(next.lastClear.rows, [18, 19]);
+  assert.equal(next.lastClear.id, base.lastClear.id + 1);
+  // Per-row colour hint for the burst: the O that completed both rows.
+  assert.deepEqual(next.lastClear.colors, ['O', 'O']);
+  // The rows are gone from the board but the caller still knows where they were.
+  assert.ok(next.board[18].every(cell => cell === 0));
+  assert.ok(next.board[19].every(cell => cell === 0));
+});
+
+test('a clear that empties the board is flagged as perfect', () => {
+  const next = reducer(rigged(started()), { type: 'HARD_DROP' });
+
+  assert.equal(next.lastClear.count, 2);
+  assert.equal(next.lastClear.perfect, true);
+  assert.ok(next.board.every(row => row.every(cell => cell === 0)));
+});
+
+test('a clear that leaves blocks behind is not perfect', () => {
+  const board = createBoard();
+  for (let c = 2; c < BOARD_COLS; c++) board[BOARD_ROWS - 1][c] = 'X';
+
+  const next = reducer(
+    { ...started(), board, piece: { type: 'O', x: 0, y: 0, rotation: 0 } },
+    { type: 'HARD_DROP' },
+  );
+
+  assert.equal(next.lastClear.count, 1);
+  assert.equal(next.lastClear.perfect, false);
+});
+
+test('a lock without lines never reports a perfect clear', () => {
+  const next = reducer(
+    { ...started(), board: createBoard(), piece: { type: 'O', x: 0, y: BOARD_ROWS - 2, rotation: 0 } },
+    { type: 'LOCK' },
+  );
+
+  assert.equal(next.lastClear.count, 0);
+  assert.equal(next.lastClear.perfect, false);
+});
+
+test('combo counts consecutive clears and resets on a lock without lines', () => {
+  let state = reducer(rigged(started()), { type: 'HARD_DROP' });
+  assert.equal(state.lastClear.count, 2);
+  assert.equal(state.combo, 1);
+
+  state = reducer(rigged(state), { type: 'HARD_DROP' });
+  assert.equal(state.lastClear.count, 2);
+  assert.equal(state.combo, 2);
+
+  state = reducer(
+    { ...state, board: createBoard(), piece: { type: 'O', x: 0, y: 0, rotation: 0 } },
+    { type: 'LOCK' },
+  );
+  assert.equal(state.lastClear.count, 0);
+  assert.deepEqual(state.lastClear.rows, []);
+  assert.equal(state.combo, 0);
+});
+
+test('every lock bumps lastClear.id, so the UI can fire one effect per lock', () => {
+  const place = (s) => ({
+    ...s,
+    board: createBoard(),
+    piece: { type: 'O', x: 0, y: BOARD_ROWS - 2, rotation: 0 },
+  });
+
+  let state = started();
+  const startId = state.lastClear.id;
+
+  state = reducer(place(state), { type: 'LOCK' });
+  state = reducer(place(state), { type: 'LOCK' });
+  state = reducer(place(state), { type: 'LOCK' });
+
+  assert.equal(state.gameOver, false);
+  assert.equal(state.lastClear.id, startId + 3);
+  assert.equal(state.lastClear.count, 0);
+});
+
+test('START resets the effect metadata', () => {
+  const cleared = reducer(rigged(started()), { type: 'HARD_DROP' });
+  assert.equal(cleared.combo, 1);
+
+  const restarted = reducer(cleared, { type: 'START' });
+  assert.equal(restarted.combo, 0);
+  assert.deepEqual(restarted.lastClear, { id: 0, count: 0, rows: [], colors: [], perfect: false });
+});

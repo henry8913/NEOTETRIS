@@ -34,8 +34,24 @@ A cyberpunk-styled Tetris game built with **React 19** + **Vite 8** (frontend) a
   - **Floating data particles** — neon dots drifting upward in cyberpunk colors
   - **Data stream accents** — Matrix-style digital rain on screen edges
   - **Pulsing ambient glow** — shifting cyan-to-magenta radial gradient
-- **Keyboard controls** — arrows + space + X/Z/C/P
-- **Touch controls** — on-screen buttons with a single pointer path (no double input)
+  - **Level-reactive ambience** — the background intensity follows the current level (`--level`, capped at 10)
+- **Viewport-fit layout** — zero page scroll on every screen:
+  - **Desktop / landscape** — three columns (controls rail · board · hold/next rail) in a centred 1180px stage
+  - **Mobile portrait** — compact 6-item HUD, board, and a single row of thumb buttons
+  - **Landscape phones** — the wide shell without the top bar; score/level/lines move into the right rail
+  - Real safe-area margins (`viewport-fit=cover`) and a board sized from the available height
+- **Synthesized audio** — 12 WebAudio sounds (move, rotate, lock, hold, 1–4 line clears, TETRIS, perfect clear, level-up, game over, start), no audio files, `M` to mute; the choice is remembered locally
+- **Juice & effects**:
+  - Row flash and neon burst on every clear
+  - `SINGLE` / `DOUBLE` / `TRIPLE` / `TETRIS!` / `PERFECT CLEAR` banners
+  - Combo badge for consecutive clears
+  - Level-up banner and colour wash
+  - Screen shake on hard drops, TETRIS and game over
+  - Count-up score readout and a landing ripple on hard drop
+  - Game-over desaturation of the playfield
+- **Accessibility** — real `<button>` controls, visible focus, aria labels/live score, keyboard-operable overlays, and `prefers-reduced-motion` support (effects disabled or snapped to their end state)
+- **Keyboard controls** — arrows + space + X/Z/C/P/M
+- **Touch controls** — on-screen buttons with a single pointer path (no double input), 44px+ targets
 - **Leaderboard API** — save and retrieve high scores (works with or without MongoDB)
 
 ## Tech Stack
@@ -55,12 +71,27 @@ A cyberpunk-styled Tetris game built with **React 19** + **Vite 8** (frontend) a
 ├── client/                       # React frontend
 │   ├── src/
 │   │   ├── main.jsx              # Entry point
-│   │   ├── App.jsx               # UI wiring, lock delay, input
-│   │   ├── game.js               # Pure state + reducer
+│   │   ├── App.jsx               # UI wiring, two layouts, lock delay, input
+│   │   ├── game.js               # Pure state + reducer (+ combo/lastClear metadata)
 │   │   ├── tetris.js             # Pure primitives, SRS kick tables
+│   │   ├── fx.js                 # Reducer wrapper: transient FX state
+│   │   ├── sound.js              # WebAudio synth + persisted mute
+│   │   ├── layout.js             # Shared breakpoint + useWideLayout
+│   │   ├── input.js              # Single click path for on-screen buttons
+│   │   ├── components/           # UI building blocks
+│   │   │   ├── Board.jsx         # Board, cells, clear flash, stage
+│   │   │   ├── SidePanel.jsx     # Right rail: hold, next, mute, hints
+│   │   │   ├── ControlsRail.jsx  # Left rail: D-pad, drop, pause
+│   │   │   ├── MobileHud.jsx     # Compact 6-item HUD
+│   │   │   ├── Overlays.jsx      # Start / pause / game over
+│   │   │   ├── Background.jsx    # Particles + data streams
+│   │   │   ├── Fx.jsx            # Sweep, burst, shockwave, wash, ripple, count-up
+│   │   │   ├── StatCard.jsx      # Top-bar stat card
+│   │   │   ├── pieces.jsx        # Previews, hold slot, mute button, SVG icon
+│   │   │   └── TouchControls.jsx # Compact thumb pad
 │   │   ├── tetris.test.js        # 13 tests
-│   │   ├── game.test.js          # 15 tests
-│   │   ├── App.css               # Cyberpunk styles
+│   │   ├── game.test.js          # 22 tests
+│   │   ├── App.css               # Cyberpunk styles + two compositions
 │   │   └── index.css             # Global theme
 │   ├── public/                   # Static assets
 │   └── dist/                     # Production build (gitignored)
@@ -110,7 +141,7 @@ Configuration lives in `server/.env.example` (copy to `.env` or export the varia
 ### Test
 
 ```bash
-npm test --prefix client   # 28 tests
+npm test --prefix client   # 35 tests
 npm test --prefix server   # 44 tests
 ```
 
@@ -179,15 +210,18 @@ The Express server mounts `client/dist` with an SPA fallback when the build exis
 | `Space` | Hard drop |
 | `C` / `Shift` | Hold / swap piece |
 | `P` / `Esc` | Pause / resume |
+| `M` | Mute / unmute |
 | `Enter` | Start / Restart |
 
 Touch buttons mirror the same actions: move, rotate, hold, pause, soft drop and hard drop.
+
+On desktop and landscape a visible mute button sits in the right rail (always available on mobile in the HUD); the setting is stored in `localStorage`.
 
 ## Roadmap
 
 - [ ] Leaderboard UI (connect client to API)
 - [x] Wall kicks (SRS)
 - [x] Hold piece
-- [ ] Sound effects
+- [x] Sound effects (synthesized WebAudio, mute persisted)
 - [ ] Local high score persistence
 - [ ] Gamepad support

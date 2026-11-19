@@ -1,4 +1,5 @@
 import {
+  BOARD_ROWS,
   MAX_LOCK_RESETS,
   NEXT_QUEUE_SIZE,
   calcScore,
@@ -71,6 +72,9 @@ export function initialState() {
     lines: 0,
     gameOver: false,
     started: false,
+    // Effect metadata only: never consulted by the rules above.
+    combo: 0,
+    lastClear: { id: 0, count: 0, rows: [], colors: [], perfect: false },
   };
 }
 
@@ -86,17 +90,45 @@ function bumpResets(state) {
 /**
  * Locks the current piece into the board, clears lines, scores and spawns the
  * next piece from the queue. A blocked spawn ends the run.
+ *
+ * Besides the rules it records two presentation-only fields:
+ * - `lastClear` = `{ id, count, rows, colors, perfect }` where `rows` are the
+ *   absolute row indices of the lines removed (computed before they disappear),
+ *   `colors` the piece type that dominates each removed row (the UI maps it to
+ *   a neon colour), `perfect` whether the board came out completely empty, and
+ *   `id` is a strictly increasing lock counter, so the UI can fire each effect
+ *   once.
+ * - `combo` = number of consecutive locks that cleared at least one line.
  */
 export function lockReduce(state) {
   const { board, piece } = state;
-  const [cleaned, cleared] = clearLines(
-    lockPiece(board, piece.type, piece.x, piece.y, piece.rotation),
-  );
+  const filled = lockPiece(board, piece.type, piece.x, piece.y, piece.rotation);
+
+  const rows = [];
+  const colors = [];
+  for (let r = 0; r < BOARD_ROWS; r++) {
+    if (filled[r].every(cell => cell !== 0)) {
+      rows.push(r);
+      colors.push(filled[r].find(cell => cell !== 0) ?? null);
+    }
+  }
+
+  const [cleaned, cleared] = clearLines(filled);
+  // A perfect clear means at least one line went and nothing is left behind.
+  const perfect = cleared > 0 && cleaned.every(row => row.every(cell => cell === 0));
 
   const lines = state.lines + cleared;
   const level = Math.floor(lines / 10) + 1;
   // Points are awarded with the level the lines were cleared at.
   const score = state.score + calcScore(cleared, state.level);
+  const combo = cleared > 0 ? (state.combo ?? 0) + 1 : 0;
+  const lastClear = {
+    id: (state.lastClear?.id ?? 0) + 1,
+    count: cleared,
+    rows,
+    colors,
+    perfect,
+  };
 
   const drawn = takeFromQueue(state.nextQueue, state.bag);
   const nextPiece = spawnPiece(drawn.type);
@@ -109,6 +141,8 @@ export function lockReduce(state) {
     score,
     level,
     lines,
+    combo,
+    lastClear,
     canHold: true,
     lockResets: 0,
   };
