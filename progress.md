@@ -10,17 +10,17 @@
 - **FX layer**: `fx.js` — wrapper puro del reducer (`initAll`, `reduceAll`, `fxDone`): deriva `intro`, `flash`, `banner`, `shake`, `wash`, `shock`, `drop` nello stesso dispatch; azioni `FX_DONE` / `FX_SHAKE`
 - **Audio**: `sound.js` — solo WebAudio (oscillatori + gain, nessun asset), 12 suoni, mute persistito in `localStorage` (`neotetris.muted`), `AudioContext` creato al primo gesto
 - **Layout**: `layout.js` — `WIDE_LAYOUT_QUERY = '(min-width: 900px), (orientation: landscape) and (max-height: 560px)'` + `useWideLayout` (`useSyncExternalStore`); `input.js` — `press()` come unico path dei bottoni, `pressHardDrop()`, `repeatPress()` per il joystick e `haptic()`; `joystick.js` — matematica pura dello stick (dead zone, asse dominante, tap, costanti DAS)
-- **API client**: `api.js` — unico modulo che parla HTTP: `API_BASE = VITE_API_URL || ''`, `fetchScores(limit, { timeout, signal })`, `submitScore()`, `fetchHealth()`; timeout 5s via abort (`408`), righe validate (`parseScore`), errori con `status`/`details`/`retryAfter`
-- **Helper leaderboard**: `leaderboard.js` — funzioni pure condivise: `normalizeName` (max 20, strip control, fallback `PLAYER`), `compareScores`, `mergeScores` (dedupe per `id`), `rankOf`, `isRecord`, `formatDate` (UTC `DD/MM`)
+- **API client**: `api.js` — unico modulo che parla HTTP: `API_BASE = VITE_API_URL || ''`, `fetchScores(limit, { timeout, signal })`, `submitScore()`, `fetchHealth()`; timeout via abort (`408`) — 5s in lettura, **10s in scrittura** (una POST su rete mobile non va abbandonata a 5s), righe validate (`parseScore`), errori con `status`/`details`/`retryAfter`
+- **Helper leaderboard**: `leaderboard.js` — funzioni pure condivise: `normalizeName` (max 20, strip control, fallback `PLAYER`), `compareScores`, `mergeScores` (dedupe per `id`; oggi solo board offline e dedupe del rank), `rankOf`, `isRecord`, `formatDate` (UTC `DD/MM`)
 - **Storage locale**: `storage.js` — wrapper sicuro di `localStorage` in `try/catch`; chiavi `neotetris.player`, `neotetris.best`, `neotetris.scores` (max 20 run locali)
-- **Cache**: `scoreCache.js` — board merged in memoria per tab, TTL 30s, invalidata dopo un salvataggio o su REFRESH/RETRY
+- **Cache**: `scoreCache.js` — board **del server** in memoria per tab (righe come arrivano, mai unite alle run locali), TTL 30s, invalidata dopo un salvataggio o su REFRESH/RETRY
 - **Build identity**: `buildInfo.js` — `assetName`, `parseEntryAsset`, `buildTag`, `isStale` (puri, testati); tag `BUILD <HASH6>` nella start screen e banner `NEW VERSION AVAILABLE` quando l'HTML servito referenzia un entry diverso (throttle 30s, `cache: 'no-store'`, offline silenzioso)
 - **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~510 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, rilevamento build obsoleta + banner, stato della modale rankings, due composizioni di layout
 - **Rendering**: `components/` (`Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Joystick`, `TouchControls`, `Overlays`, `Leaderboard`, `Background`, `Fx`, `StatCard`, `pieces`); stili in `App.css` + `index.css` (no framework CSS)
 - **Test**: `node:test` in entrambi i package, nessun framework — **90 test client** (13 tetris + 22 game + 17 leaderboard + 13 joystick + 3 sound + 9 runKey + 4 storage + 9 buildInfo), **44 test server**
 - **Backend** modulare: `app.js` (factory `createApp`, montabile nei test senza `listen`), `store.js` (store memoria/Mongo con fallback automatico), `validation.js` (payload score), `index.js` (entry sottile con graceful shutdown)
 - **Store**: Mongo opzionale, timeout 3s → store in memoria; risposta API sempre `{ id, name, score, level, lines, date }` (mai `_id`/`__v`)
-- **Leaderboard end-to-end**: game over → best locale → form nome → `POST /api/scores` → rank; modale Top 10 con badge SERVER/LOCAL e fallback offline
+- **Leaderboard end-to-end**: game over → best locale → form nome (**nome congelato al primo invio**) → `POST /api/scores` → rank sul board del server; modale Top 10 con badge SERVER/LOCAL e fallback offline
 
 ## Convenzioni chiave
 
@@ -170,12 +170,15 @@
 
 - **End-to-end**: a game over il best locale viene scritto subito (`neotetris.best`), poi il form nome (precompilato con `neotetris.player` e normalizzato con `normalizeName`) invia `POST /api/scores` con la chiave idempotente della run; in caso di successo la riga creata viene salvata in locale, si chiede `GET /api/scores?limit=50` per calcolare il rank, il form diventa la conferma read-only e la modale rankings si apre da sola con la riga evidenziata
 - **Zero-score**: una run che finisce a 0 non è una run da salvare — `shouldOfferSave` (`leaderboard.js`) blocca form, POST, `saveLocalScore`, `saveBest`, badge `NEW RECORD` e apertura automatica della modale; al loro posto il blocco read-only `NO SCORE TO SAVE` / `PLAY AGAIN TO GET ON THE BOARD` e restano solo `RANKINGS` / `REBOOT`. Il server resta permissivo (`score >= 0`) per compatibilità API: la regola è una scelta di prodotto lato client
-- **Offline**: se il POST fallisce (rete, timeout, 429, 400) la run resta in `neotetris.scores` con id `local-…`; la UI mostra `SAVED LOCALLY` e `RETRY` rispedisce al server **con la stessa chiave** (una POST andata in timeout dopo l'insert torna 200 con la riga esistente), sostituendo la copia provvisoria
-- **Modale**: Top 10 con `mergeScores(server, local)`, badge `SERVER`/`LOCAL`, skeleton, stati vuoto/errore, RETRY/REFRESH; se il server non risponde si usa `fetchHealth()` per distinguere "offline" da "server in errore"
+- **Offline**: se il POST fallisce (rete, timeout, 429, 400) la run resta in `neotetris.scores` con id `local-…`; la UI mostra `SAVED LOCALLY` e `RETRY` rispedisce al server **con la stessa chiave e lo stesso nome** (una POST andata in timeout dopo l'insert torna 200 con la riga esistente), sostituendo la copia provvisoria. Il campo nome resta bloccato: nessun rename dopo il primo tentativo
+- **Board unico**: quando `GET /api/scores` risponde la modale mostra **solo** le righe del server (`fetchScores(10)`, cache tale e quale): niente merge con le run locali, quindi due dispositivi vedono la stessa classifica e "batti il record di qualcun altro" è vero. Le run locali compaiono solo nel ramo offline/errore, con badge `LOCAL`
+- **Modale**: Top 10 dal server, badge `SERVER`/`LOCAL`, skeleton, stati vuoto/errore, RETRY/REFRESH; se il server non risponde si usa `fetchHealth()` per distinguere "offline" da "server in errore"
+- **Rank coerente**: `rankOf(created, remote)` dopo il salvataggio (board condiviso); `rankOf(created, loadLocalScores())` solo se la GET del rank fallisce
+- **Nome bloccato**: il primo `handleSubmit` imposta `attempted` + `lockedNameRef` → input `disabled` + `readOnly` per il resto della run (successo **o** errore), `RETRY` rimanda lo stesso nome e la stessa chiave; `document.activeElement.blur()` all'invio chiude la tastiera iOS e `enterKeyHint="send"` sull'input
 - **Cache**: board merged in memoria per 30s (`CACHE_TTL_MS`), invalidata dopo un salvataggio e dai pulsanti di refresh
 - **Accessibilità**: `role="dialog"` + `aria-modal`, focus iniziale su CLOSE, Tab trap, Esc/backdrop per chiudere, focus restituito all'elemento che l'ha aperta; apertura in partita → `TOGGLE_PAUSE`
 - **Storage**: `neotetris.player` (nome), `neotetris.best` (record), `neotetris.scores` (max 20 run, ordinate); ogni accesso in `try/catch`, JSON corrotto ignorato; il mute resta in `neotetris.muted`
-- **Rete**: proxy Vite solo in dev, stessa origine in produzione, `VITE_API_URL` come override; richieste con timeout 5s e righe validate lato client
+- **Rete**: proxy Vite solo in dev, stessa origine in produzione, `VITE_API_URL` come override; timeout 5s in lettura / 10s in scrittura e righe validate lato client
 
 ## Problemi noti / prossimi passi
 

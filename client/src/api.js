@@ -140,8 +140,12 @@ export async function fetchScores(limit = 10, { timeout = 5000, signal } = {}) {
  * `key` is the run's idempotency key: the same key twice answers with the
  * existing row (200) instead of inserting a second one (201). Both are success
  * here — the caller only cares about the row it gets back.
+ *
+ * The default timeout is 10s (not 5s like `fetchScores`): a save is a single
+ * write on mobile data, and timing out early was dropping slow-but-successful
+ * runs into the offline branch. A timeout still surfaces as status 408.
  */
-export async function submitScore({ name, score, level, lines, key } = {}, { timeout = 5000 } = {}) {
+export async function submitScore({ name, score, level, lines, key } = {}, { timeout = 10000 } = {}) {
   const timer = withTimeout(timeout);
 
   const payload = {

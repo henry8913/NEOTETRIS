@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ScoreValue } from './Fx.jsx';
 import { fetchScores, submitScore } from '../api.js';
-import { isRecord, mergeScores, normalizeName, rankOf, shouldOfferSave } from '../leaderboard.js';
+import { isRecord, normalizeName, rankOf, shouldOfferSave } from '../leaderboard.js';
 import {
   loadBest,
   loadLocalScores,
@@ -35,6 +35,18 @@ import { makeRunKey } from '../runKey.js';
  * A confirmed save replaces the form with a read-only confirmation and opens
  * the rankings modal, so one run is saved exactly once; REBOOT is the only way
  * back to a form (the component is remounted per run by App's `key`).
+ *
+ * Name lock: the first `handleSubmit` freezes the name for the rest of the run,
+ * whether the POST succeeds or fails. On mobile the 5s default timeout used to
+ * land a slow POST in the `error` branch with an editable field, and a second
+ * tap saved a renamed run under a new key — i.e. two rows on the global board
+ * from one run. From `attempted` on, the input is `disabled` + `readOnly`, the
+ * submit path reads the frozen name from `lockedNameRef`, and in the error
+ * state RETRY is the only actionable control (same name, same key).
+ *
+ * The on-screen keyboard is dismissed at the start of every submit
+ * (`document.activeElement.blur()`): iOS can keep it over the button and
+ * swallow the confirmation that replaced the form.
  *
  * Every attempt carries the same idempotency key (`runKey.js`): a POST that
  * timed out after the insert answers with the existing row instead of adding a
@@ -80,6 +92,7 @@ export default function Overlays({
 }) {
   const [name, setName] = useState(() => normalizeName(loadName()));
   const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
+  const [attempted, setAttempted] = useState(false);
   const [saveRank, setSaveRank] = useState(null);
   const [saveError, setSaveError] = useState('');
   const [localOnly, setLocalOnly] = useState(false);
@@ -94,6 +107,9 @@ export default function Overlays({
   // re-render, and a remount (REBOOT) is what clears them.
   const savedRef = useRef(false);
   const keyRef = useRef('');
+  // The name is frozen on the first submit attempt; every later attempt (RETRY
+  // included) sends this exact string, never whatever the field says.
+  const lockedNameRef = useRef('');
   // REBOOT can be pressed while a POST is still in flight: from then on the
   // component is gone and must not open the modal over the new run.
   const aliveRef = useRef(true);
@@ -138,10 +154,19 @@ export default function Overlays({
     // RETRY: a POST that timed out after the insert must replay, not duplicate.
     if (!keyRef.current) keyRef.current = makeRunKey();
 
+    // Defence in depth against a slow mobile POST: dismiss the on-screen
+    // keyboard (iOS can keep it over the confirmation) and freeze the name for
+    // the rest of the run, before the request even starts. A failed attempt
+    // leaves `attempted` true, so the field never becomes editable again.
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    if (active && typeof active.blur === 'function') active.blur();
+
     busyRef.current = true;
-    const clean = normalizeName(name);
+    const clean = lockedNameRef.current || normalizeName(name);
+    lockedNameRef.current = clean;
     setName(clean);
     saveName(clean);
+    setAttempted(true);
     setSaveStatus('saving');
     setSaveError('');
 
@@ -164,8 +189,10 @@ export default function Overlays({
 
       let rank = null;
       try {
+        // The shared board is the server one: the rank shown to the player
+        // always refers to it, never to a board of this device's own runs.
         const remote = await fetchScores(50);
-        rank = rankOf(created, mergeScores(remote, loadLocalScores(), 50));
+        rank = rankOf(created, remote);
       } catch {
         rank = rankOf(created, loadLocalScores());
       }
@@ -210,7 +237,9 @@ export default function Overlays({
   };
 
   if (gameOver) {
-    const locked = saveStatus === 'saving' || saveStatus === 'saved';
+    // `attempted` is sticky: from the first submit on, the name can never be
+    // edited again in this run — success or failure, the field is frozen.
+    const locked = attempted || saveStatus === 'saving' || saveStatus === 'saved';
     // A confirmed save is terminal: no input, no submit, no way back to idle.
     const saved = saveStatus === 'saved';
     const note =
@@ -272,10 +301,13 @@ export default function Overlays({
               maxLength={20}
               autoComplete="nickname"
               inputMode="text"
+              enterKeyHint="send"
               spellCheck="false"
               placeholder="Pilot name"
               aria-label="Player name"
+              aria-readonly={locked}
               disabled={locked}
+              readOnly={locked}
               onChange={(event) => setName(event.target.value)}
             />
             {saveStatus === 'error' ? (

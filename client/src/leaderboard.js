@@ -62,9 +62,16 @@ export function compareScores(a, b) {
 }
 
 /**
- * Merges the server list with the local one: dedupe by `id` (the server copy
- * wins, because it comes first), sort, truncate. Malformed rows and non-arrays
- * are ignored, so a bad response can never break the panel.
+ * Merges two score lists into one board: dedupe by `id` (the first list wins,
+ * so a server copy replaces a provisional local one), sort, truncate.
+ * Malformed rows and non-arrays are ignored, so a bad response can never break
+ * the panel.
+ *
+ * The global board is **not** a merge any more: when the server answers, the
+ * leaderboard renders its rows only (the shared ranking is the single source of
+ * truth). This helper now serves the offline board — `mergeScores([],
+ * loadLocalScores())` — where deduping and sorting the device's own runs is
+ * still exactly what the `LOCAL` view needs.
  */
 export function mergeScores(remote, local, limit = 10) {
   const max = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;

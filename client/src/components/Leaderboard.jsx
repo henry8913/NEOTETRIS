@@ -11,9 +11,11 @@ import { loadLocalScores } from '../storage.js';
 /**
  * TOP RUNNERS — the leaderboard modal.
  *
- * Sources: the API when it answers, the local runs (same device) when it does
- * not. The badge always says which one is on screen, so an offline board is
- * never mistaken for the global one. Successful responses are cached in memory
+ * Source of truth: the server. When the API answers, the board is *exactly*
+ * that list — no local rows are merged in, so two devices always see the same
+ * ranking and "beat someone else's record" means what it says. The local runs
+ * (same device) are shown only in the offline/error branch, under the `LOCAL`
+ * badge, with a notice that says so. Successful responses are cached in memory
  * for 30s (`scoreCache.js`); REFRESH and RETRY bypass the cache.
  *
  * Accessibility: `dialog` + `aria-modal`, initial focus on CLOSE, Tab cycles
@@ -99,9 +101,11 @@ export default function Leaderboard({ open = false, onClose, highlightId = null 
       try {
         const remote = await fetchScores(10);
         if (!alive) return;
-        const merged = mergeScores(remote, loadLocalScores(), 10);
-        writeScoreCache(merged);
-        setRows(merged);
+        // The server board is the global one: cache and render it as it is.
+        // Merging `loadLocalScores()` here used to leak this device's offline
+        // runs into everybody's ranking (and kept the SERVER badge on them).
+        writeScoreCache(remote);
+        setRows(remote);
         setSource('server');
         setStatus('ready');
       } catch (error) {
