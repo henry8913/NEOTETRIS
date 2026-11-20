@@ -271,6 +271,50 @@ test('GET /api/health reports the memory store', async (t) => {
   assert.equal(body.db, 'memory');
   assert.equal(typeof body.uptime, 'number');
   assert.ok(!Number.isNaN(Date.parse(body.timestamp)));
+  assert.ok(
+    body.build === null || typeof body.build === 'string',
+    'build is the deployed hash6, or null in API-only mode',
+  );
+});
+
+test('GET /api/health reports build: null when no client is deployed', async (t) => {
+  const ctx = await startServer({ staticDir: null });
+  t.after(() => ctx.close());
+
+  const body = await (await fetch(`${ctx.baseUrl}/api/health`)).json();
+
+  assert.equal(body.build, null);
+  assert.equal(body.status, 'ok');
+  assert.equal(body.db, 'memory');
+  assert.equal(typeof body.uptime, 'number');
+  assert.ok(!Number.isNaN(Date.parse(body.timestamp)));
+});
+
+test('GET /api/health derives the build tag from the deployed index.html', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neotetris-build-'));
+  fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'index.html'),
+    '<!doctype html><html><head><script type="module" crossorigin src="/assets/index-abc123def.js"></script></head></html>',
+  );
+  fs.writeFileSync(path.join(dir, 'assets', 'index-abc123def.js'), 'export {};\n');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const ctx = await startServer({ staticDir: dir });
+  t.after(() => ctx.close());
+
+  const first = await (await fetch(`${ctx.baseUrl}/api/health`)).json();
+
+  assert.equal(first.build, 'abc123');
+  // The old fields keep their types, the payload just gained one key.
+  assert.equal(first.status, 'ok');
+  assert.equal(first.db, 'memory');
+  assert.equal(typeof first.uptime, 'number');
+  assert.ok(!Number.isNaN(Date.parse(first.timestamp)));
+
+  // Stable per process: it only changes on a redeploy (restart).
+  const second = await (await fetch(`${ctx.baseUrl}/api/health`)).json();
+  assert.equal(second.build, first.build);
 });
 
 test('unknown /api routes return a JSON 404', async (t) => {
@@ -356,4 +400,48 @@ test('skips static serving silently when the dist dir is missing', async (t) => 
 
   const health = await fetch(`${ctx.baseUrl}/api/health`);
   assert.equal(health.status, 200);
+});
+
+test('the SPA document is never cached, hashed assets keep their cache', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'neotetris-cache-'));
+  fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'index.html'),
+    '<!doctype html><html><head><script type="module" src="/assets/index-abc123def.js"></script></head></html>',
+  );
+  fs.writeFileSync(path.join(dir, 'assets', 'index-abc123def.js'), 'export {};\n');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const ctx = await startServer({ staticDir: dir });
+  t.after(() => ctx.close());
+
+  // `/`, a deep link and the shell by name: the same un-cacheable document.
+  for (const pathname of ['/', '/play/now', '/index.html']) {
+    const res = await fetch(`${ctx.baseUrl}${pathname}`);
+
+    assert.equal(res.status, 200, `GET ${pathname}`);
+    assert.match(res.headers.get('cache-control') ?? '', /no-store/, `GET ${pathname} cache-control`);
+    assert.equal(res.headers.get('pragma'), 'no-cache', `GET ${pathname} pragma`);
+    assert.equal(res.headers.get('expires'), '0', `GET ${pathname} expires`);
+    assert.equal(res.headers.get('etag'), null, `GET ${pathname} must not expose a validator`);
+    assert.equal(res.headers.get('last-modified'), null, `GET ${pathname} must not expose a validator`);
+    assert.match(await res.text(), /index-abc123def/, `GET ${pathname} serves the shell`);
+  }
+
+  // Hashed assets are untouched: still publicly cacheable, no no-store.
+  const asset = await fetch(`${ctx.baseUrl}/assets/index-abc123def.js`);
+  assert.equal(asset.status, 200);
+
+  const assetCache = asset.headers.get('cache-control') ?? '';
+  assert.ok(!/no-store/.test(assetCache), `asset must stay cacheable (got "${assetCache}")`);
+  assert.match(assetCache, /public/, `asset cache-control (got "${assetCache}")`);
+  assert.equal(asset.headers.get('pragma'), null);
+  assert.equal(asset.headers.get('expires'), null);
+
+  // The API is untouched by the document policy.
+  const health = await fetch(`${ctx.baseUrl}/api/health`);
+  assert.equal(health.status, 200);
+  assert.equal(health.headers.get('cache-control'), null);
+  assert.equal(health.headers.get('pragma'), null);
+  assert.equal((await health.json()).build, 'abc123');
 });

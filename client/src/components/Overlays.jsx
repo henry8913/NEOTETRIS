@@ -21,7 +21,8 @@ import { makeRunKey } from '../runKey.js';
  * The game-over screen is ordered by importance: the score is the largest
  * element on it (the `final-block` carries no border, so it cannot be mistaken
  * for a control), then the record badge / local best, then the save form, and
- * only at the bottom the two controls (RANKINGS and REBOOT).
+ * only at the bottom the two controls (RANKINGS and PLAY AGAIN once the save is
+ * confirmed; REBOOT in the zero-score / error states).
  *
  * LEVEL / LINES are deliberately not repeated here: the stat strip (wide), the
  * right rail (landscape) and the mobile HUD are always visible behind the
@@ -251,7 +252,9 @@ export default function Overlays({
 
     return (
       <div className="overlay game-over-overlay" role="dialog" aria-label="Game over">
-        <h2 className="overlay-title overlay-title--over">System Halted</h2>
+        <h2 className="overlay-title overlay-title--over">
+          {saved ? 'Score saved' : 'System Halted'}
+        </h2>
 
         <div className="final-block">
           <span className="final-label">Score</span>
@@ -278,14 +281,14 @@ export default function Overlays({
         ) : saved ? (
           /*
            * Read-only confirmation. It replaces the form for this run: the only
-           * ways out are RANKINGS and REBOOT (a new run remounts Overlays, so
+           * ways out are RANKINGS and PLAY AGAIN (a new run remounts Overlays, so
            * the form comes back clean).
            */
-          <div className="save-confirm" role="status" aria-live="polite">
+          <div className="save-confirm save-confirm--saved" role="status" aria-live="polite">
             <span className="save-confirm__line">
               Saved as <b className="save-confirm__name">{savedName}</b>
             </span>
-            <span className="save-confirm__rank">
+            <span className="save-confirm__rank save-confirm__rank--hero">
               {saveRank ? `Rank #${saveRank}` : 'On the board'}
             </span>
           </div>
@@ -330,10 +333,23 @@ export default function Overlays({
           <button type="button" className="btn btn--ghost btn--small" onClick={onRankings}>
             Rankings
           </button>
-          <button type="button" className="btn" onClick={onStart} aria-label="Reboot and play again">
-            Reboot
+          <button
+            type="button"
+            className="btn"
+            onClick={onStart}
+            aria-label={saved ? 'Play again' : 'Reboot and play again'}
+          >
+            {saved ? 'Play again' : 'Reboot'}
           </button>
         </div>
+
+        {/*
+         * Same micro-tag as the start screen, at the bottom of the card: the
+         * build is what a user quotes when reporting a problem, and this is
+         * the screen they are looking at when it happens. A caption, never a
+         * competitor for the score or the buttons above it.
+         */}
+        {build && <p className="build-tag build-tag--over">build {build}</p>}
       </div>
     );
   }

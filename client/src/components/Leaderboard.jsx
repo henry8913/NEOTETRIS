@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchHealth, fetchScores } from '../api.js';
 import { formatDate, mergeScores } from '../leaderboard.js';
 import {
@@ -21,7 +22,24 @@ import { loadLocalScores } from '../storage.js';
  * Accessibility: `dialog` + `aria-modal`, initial focus on CLOSE, Tab cycles
  * inside the card, Esc and a backdrop click close it, and focus returns to
  * whatever opened it.
+ *
+ * Rendered through a portal to `document.body` (nothing is mounted while
+ * closed): on iOS the dialog used to live inside `.board-frame`, whose
+ * `container-type: inline-size` / transforms / `overflow: hidden` can trap a
+ * `position: fixed` backdrop in a stacking context and paint it *behind* the
+ * game-over overlay — the DOM said "open", the screen said "nothing happened".
+ * The portal also guarantees `.lb-backdrop` (z 90) sits above the overlay (10)
+ * and the update banner (8), and it keeps the dialog out of the game shell, so
+ * opening it can never scroll the page.
+ *
+ * Ghost click: iOS delivers the `click` of the SAVE tap *after* this dialog
+ * mounts, and that click used to land on the backdrop and close the modal the
+ * instant it appeared. Any backdrop interaction (pointerdown/click) and Esc
+ * inside the first 600 ms after opening is therefore ignored; the CLOSE,
+ * REFRESH and RETRY buttons are never gated.
  */
+
+const OPEN_GRACE_MS = 600;
 
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -57,7 +75,7 @@ function describeFailure(error) {
   return 'Server unreachable';
 }
 
-export default function Leaderboard({ open = false, onClose, highlightId = null }) {
+export default function Leaderboard({ open = false, onClose, highlightId = null, build = '' }) {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [source, setSource] = useState('server');
@@ -68,6 +86,9 @@ export default function Leaderboard({ open = false, onClose, highlightId = null 
   const modalRef = useRef(null);
   const closeRef = useRef(null);
   const restoreRef = useRef(null);
+  // performance.now() at the moment the dialog opened; the backdrop and Esc
+  // ignore anything that arrives inside OPEN_GRACE_MS of it.
+  const openedAtRef = useRef(0);
 
   const refresh = useCallback(() => {
     invalidateScoreCache();
@@ -128,9 +149,17 @@ export default function Leaderboard({ open = false, onClose, highlightId = null 
     };
   }, [open, reloadKey]);
 
+  // Stamp the opening time on every open (and only on open): the guard must be
+  // re-armed for each dialog, and a later re-render must not extend it.
+  useEffect(() => {
+    if (open) openedAtRef.current = performance.now();
+  }, [open]);
+
   // Focus: move into the dialog on open, trap Tab, restore on close.
   useEffect(() => {
     if (!open) return undefined;
+
+    const withinGrace = () => performance.now() - openedAtRef.current < OPEN_GRACE_MS;
 
     restoreRef.current = document.activeElement;
     closeRef.current?.focus();
@@ -139,6 +168,9 @@ export default function Leaderboard({ open = false, onClose, highlightId = null 
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
+        // Esc is harmless, but stay consistent with the backdrop: the tap
+        // that saved the run can synthesise a key on some keyboards.
+        if (withinGrace()) return;
         onClose?.();
         return;
       }
@@ -149,20 +181,17 @@ export default function Leaderboard({ open = false, onClose, highlightId = null 
       const nodes = Array.from(root.querySelectorAll(FOCUSABLE));
       if (nodes.length === 0) return;
 
-      const first = nodes[0];
-      const last = nodes[nodes.length - 1];
+      // Managed cycling, not "only correct the edges": WebKit's native tab
+      // order can jump to BODY between the CLOSE button and the footer button
+      // (the page focus ring left the dialog), so every Tab is handled here.
+      // The list always comes from the dialog ref, which now lives in <body>.
       const active = document.activeElement;
-      const inside = root.contains(active);
-
-      if (event.shiftKey) {
-        if (!inside || active === first) {
-          event.preventDefault();
-          last.focus();
-        }
-      } else if (!inside || active === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      const index = nodes.indexOf(active);
+      const next = event.shiftKey
+        ? nodes[index <= 0 ? nodes.length - 1 : index - 1]
+        : nodes[index === -1 || index === nodes.length - 1 ? 0 : index + 1];
+      event.preventDefault();
+      next.focus();
     };
 
     document.addEventListener('keydown', onKeyDown);
@@ -179,12 +208,19 @@ export default function Leaderboard({ open = false, onClose, highlightId = null 
   const loading = status === 'loading';
   const empty = status === 'ready' && rows.length === 0;
 
-  return (
+  // Backdrop only, and only after the opening grace window: iOS delivers the
+  // SAVE tap's click after this dialog mounts, and it used to close it at once.
+  const handleBackdrop = (event) => {
+    if (event.target !== event.currentTarget) return;
+    if (performance.now() - openedAtRef.current < OPEN_GRACE_MS) return;
+    onClose?.();
+  };
+
+  return createPortal(
     <div
       className="lb-backdrop"
-      onPointerDown={(event) => {
-        if (event.target === event.currentTarget) onClose?.();
-      }}
+      onPointerDown={handleBackdrop}
+      onClick={handleBackdrop}
     >
       <div
         className="lb-modal"
@@ -265,12 +301,16 @@ export default function Leaderboard({ open = false, onClose, highlightId = null 
         </div>
 
         <footer className="lb-foot">
-          <span className="lb-foot__note">Top 10 · {offline ? 'local' : 'global'}</span>
+          <span className="lb-foot__note">
+            Top 10 · {offline ? 'local' : 'global'}
+            {build && <span className="lb-foot__build"> · Build {build}</span>}
+          </span>
           <button type="button" className="lb-btn" onClick={refresh} disabled={loading}>
             {loading ? 'Loading…' : 'Refresh'}
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

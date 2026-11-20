@@ -502,7 +502,12 @@ export default function App() {
         <span key={`flash-${fx.intro.id}`} className="fx-start" aria-hidden="true" />
       )}
 
-      <Leaderboard open={rankingsOpen} onClose={closeRankings} highlightId={highlightId} />
+      <Leaderboard
+        open={rankingsOpen}
+        onClose={closeRankings}
+        highlightId={highlightId}
+        build={BUILD_TAG}
+      />
     </div>
   );
 }

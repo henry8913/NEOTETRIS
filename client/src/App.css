@@ -671,6 +671,12 @@ button {
   -webkit-user-select: text;
 }
 
+/* Game-over: a caption at the bottom of the card, never a flex-shrink victim. */
+.build-tag--over {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 /*
  * "A newer version is available": fixed, above the touch layer (5) and below
  * the overlays (10), inside the safe area. Translucent neon, no
@@ -968,7 +974,7 @@ button {
 /*
  * Confirmation that replaces the form once the run is on the board. Read-only
  * on purpose: no input, no submit, nothing focusable — the next move is
- * RANKINGS or REBOOT.
+ * RANKINGS or PLAY AGAIN (REBOOT when there is nothing to save).
  */
 .save-confirm {
   display: flex;
@@ -1011,6 +1017,26 @@ button {
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--neon-yellow);
+}
+
+/*
+ * Confirmed save: the run is on the board and this block is the point of the
+ * screen (the old game-over look made a successful save indistinguishable from
+ * a missed one). It stays read-only — no input, no submit.
+ */
+.save-confirm--saved {
+  min-height: 64px;
+  border-color: rgba(0, 240, 255, 0.6);
+  background: rgba(0, 240, 255, 0.11);
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.16);
+}
+
+.save-confirm__rank--hero {
+  font-size: clamp(15px, 4.4cqw, 18px);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  color: var(--neon-yellow);
+  text-shadow: 0 0 12px rgba(255, 204, 0, 0.5);
 }
 
 /*
@@ -3080,6 +3106,22 @@ button {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: #7a7aa0;
+  /* One line, always: the build tag is appended right here. */
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/*
+ * The running build, at the bottom of the rankings: same micro-type as the
+ * start-screen tag, dimmer than the source note so it stays a footnote. It
+ * never wraps — the footer is the only place it lives, and a wrapped hash is
+ * useless in a bug report.
+ */
+.lb-foot__build {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: rgba(154, 154, 192, 0.62);
+  white-space: nowrap;
 }
 
 /* Phones: nearly the whole viewport, so the list gets the height it needs. */

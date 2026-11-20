@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readBuildTag } from './buildInfo.js';
 import { clampLimit } from './store.js';
 import { validateScorePayload } from './validation.js';
 
@@ -20,6 +21,28 @@ export const DEFAULT_STATIC_DIR = path.resolve(HERE, '../../client/dist');
 
 export const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 export const RATE_LIMIT_MAX = 30;
+
+/**
+ * Cache policy of the SPA document. A tab that keeps a stale shell can never be
+ * refreshed by the "new version available" probe, so the document itself is
+ * un-cacheable: every navigation hits the network.
+ */
+export const DOCUMENT_CACHE_CONTROL = 'no-store, no-cache, must-revalidate';
+
+/**
+ * `no-store` plus the pre-HTTP/1.1 equivalents, for old WebViews and proxies
+ * that ignore it. Hashed assets under `/assets/` are untouched.
+ */
+function setDocumentCacheHeaders(res) {
+  res.setHeader('Cache-Control', DOCUMENT_CACHE_CONTROL);
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+}
+
+/** `setHeaders` for `express.static`: only HTML documents lose their cache. */
+function setStaticHeaders(res, filePath) {
+  if (/\.html?$/i.test(filePath)) setDocumentCacheHeaders(res);
+}
 
 /**
  * Tiny in-memory, per-IP fixed-window limiter.
@@ -103,11 +126,19 @@ export function createApp({
     );
   }
 
+  // --- static dir / deployed build ---------------------------------------
+  // Resolved once per process: the build tag only changes on a redeploy, so
+  // `/api/health` is stable for the lifetime of this server.
+  const indexHtml = staticDir ? path.join(staticDir, 'index.html') : null;
+  const hasStatic = Boolean(indexHtml && fs.existsSync(indexHtml));
+  const build = hasStatic ? readBuildTag(indexHtml) : null;
+
   // --- health -------------------------------------------------------------
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
       db: store.getStatus(),
+      build,
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
     });
@@ -151,18 +182,34 @@ export function createApp({
   });
 
   // --- optional SPA static hosting ---------------------------------------
-  const indexHtml = staticDir ? path.join(staticDir, 'index.html') : null;
-  const hasStatic = Boolean(indexHtml && fs.existsSync(indexHtml));
-
   if (hasStatic) {
-    app.use(express.static(staticDir));
-
-    app.get('*', (req, res, next) => {
+    /**
+     * The document is always served by hand, never by `express.static`: `send`
+     * appends `Last-Modified`/`ETag` *after* `setHeaders` runs, and the shell
+     * must be impossible to revalidate. `etag`/`lastModified: false` drop both
+     * validators, so a 304 can never resurrect an old bundle.
+     */
+    function serveDocument(req, res, next) {
       if (req.path.startsWith('/api')) return next();
-      return res.sendFile(indexHtml, (err) => {
-        if (err) next(err);
-      });
-    });
+      setDocumentCacheHeaders(res);
+      return res.sendFile(
+        indexHtml,
+        { etag: false, lastModified: false, cacheControl: false },
+        (err) => {
+          if (err) next(err);
+        },
+      );
+    }
+
+    // A direct /index.html request must not reach express.static either.
+    app.get('/index.html', serveDocument);
+
+    // Hashed assets keep their long-lived caching untouched. `index: false`
+    // keeps `/` out of the static handler so it lands on the document route.
+    app.use(express.static(staticDir, { index: false, setHeaders: setStaticHeaders }));
+
+    // SPA fallback: deep links and `/` get the un-cacheable document.
+    app.get('*', serveDocument);
   }
 
   // --- error handler ------------------------------------------------------
