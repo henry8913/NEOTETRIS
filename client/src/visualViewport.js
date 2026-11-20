@@ -17,6 +17,19 @@ import { useEffect } from 'react';
 export const KB_INSET_VAR = '--kb-inset';
 
 /**
+ * Boolean attribute set on <html> while the on-screen keyboard is actually
+ * covering the page. CSS cannot compare a length to a threshold, so the hook
+ * publishes the decision: `data-keyboard="on"` only exists above
+ * `KB_ATTR_MIN_INSET` pixels, which is what switches the overlay cards to their
+ * fixed, full-width sheet layout (a 20px toolbar is not worth rearranging the
+ * screen for, a 300px keyboard is).
+ */
+export const KB_ATTR = 'data-keyboard';
+
+/** Below this inset the attribute stays off (~one toolbar row). */
+export const KB_ATTR_MIN_INSET = 60;
+
+/**
  * Pixels of the layout viewport hidden behind the on-screen keyboard (0 when
  * there is none, or when the browser has no `visualViewport` at all).
  *
@@ -65,6 +78,13 @@ export function useKeyboardInset() {
       if (inset === last) return;
       last = inset;
       root.style.setProperty(KB_INSET_VAR, `${inset}px`);
+      // The boolean half of the contract: CSS cannot threshold a length, so the
+      // hook decides when the keyboard is worth a layout switch (the overlays
+      // escape the board frame only from here). Written together with the
+      // property, so a remount or a missed frame can never leave them out of
+      // sync.
+      if (inset > KB_ATTR_MIN_INSET) root.setAttribute(KB_ATTR, 'on');
+      else root.removeAttribute(KB_ATTR);
       if (inset <= 0) return;
       const active = document.activeElement;
       if (
@@ -82,12 +102,13 @@ export function useKeyboardInset() {
       frame = requestAnimationFrame(apply);
     };
 
-    // No visualViewport (old browser, desktop): the property stays at 0, and the
-    // overlays behave exactly as before.
+    // No visualViewport (old browser, desktop): the property stays at 0, the
+    // attribute stays off and the overlays behave exactly as before.
     if (!vv) {
       apply();
       return () => {
         root.style.removeProperty(KB_INSET_VAR);
+        root.removeAttribute(KB_ATTR);
       };
     }
 
@@ -104,6 +125,7 @@ export function useKeyboardInset() {
       vv.removeEventListener('scroll', schedule);
       window.removeEventListener('orientationchange', schedule);
       root.style.removeProperty(KB_INSET_VAR);
+      root.removeAttribute(KB_ATTR);
     };
   }, []);
 }

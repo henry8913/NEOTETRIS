@@ -589,6 +589,50 @@ button {
   display: none;
 }
 
+/*
+ * On-screen keyboard, layout switch.
+ *
+ * `useKeyboardInset` (visualViewport.js) sets `data-keyboard="on"` on <html>
+ * once the keyboard covers more than 60px, and publishes its height as
+ * `--kb-inset`.
+ *
+ * Why the card has to leave the frame: the overlay lives inside
+ * `.board-frame`, whose 1:2 ratio makes it *width*-limited as soon as the
+ * height collapses. With the keyboard open on a 390×844 phone the viewport is
+ * ~375×370, the frame comes out ~151px wide, so the game-over card was 151px
+ * wide: RANKINGS / PLAY AGAIN clipped horizontally and the name field was
+ * cramped exactly when the player is typing. `position: fixed` escapes that
+ * (`container-type: inline-size` does not contain fixed descendants — checked
+ * in Chromium and WebKit), so the card becomes a sheet: 8px of air around it,
+ * 520px max, centred, bottom always above the keyboard. The neon card styling,
+ * `border-radius` and the internal scrolling are untouched.
+ *
+ * Stacking is unchanged by the move: the fixed box still paints inside
+ * `.game-area`'s stacking context (z 1), i.e. above the board and the touch
+ * layer (z 5) and below the rankings portal on <body> (z 90).
+ *
+ * `bottom` already reserves the keyboard, so the inset is *not* added to the
+ * padding again here, and `max-height` is released: a fixed box with top and
+ * bottom has a height.
+ */
+html[data-keyboard='on'] .overlay {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top, 0px));
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: calc(var(--kb-inset, 0px) + max(8px, env(safe-area-inset-bottom, 0px)));
+  max-width: 520px;
+  /* `left` + `right` + auto margins: the 520px cap keeps it centred instead of
+     pinning it to the left edge. */
+  margin-inline: auto;
+  max-height: none;
+  padding-bottom: var(--overlay-pad);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  z-index: 20;
+}
+
 .overlay-title {
   margin: 0;
   font-family: 'Orbitron', sans-serif;

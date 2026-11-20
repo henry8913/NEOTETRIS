@@ -17,7 +17,7 @@
 - **Build identity**: `buildInfo.js` — `assetName`, `parseEntryAsset`, `buildTag`, `isStale` (puri, testati); tag `BUILD <HASH6>` nella start screen e banner `NEW VERSION AVAILABLE` quando l'HTML servito referenzia un entry diverso (throttle 30s, `cache: 'no-store'`, offline silenzioso)
 - **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~510 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, rilevamento build obsoleta + banner, stato della modale rankings, due composizioni di layout
 - **Rendering**: `components/` (`Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Joystick`, `TouchControls`, `Overlays`, `Leaderboard`, `Background`, `Fx`, `StatCard`, `pieces`); stili in `App.css` + `index.css` (no framework CSS)
-- **Test**: `node:test` in entrambi i package, nessun framework — **100 test client** (13 tetris + 22 game + 17 leaderboard + 13 joystick + 3 sound + 9 runKey + 4 storage + 9 buildInfo + 10 saveSession), **44 test server**
+- **Test**: `node:test` in entrambi i package, nessun framework — **107 test client** (13 tetris + 22 game + 17 leaderboard + 13 joystick + 3 sound + 9 runKey + 4 storage + 9 buildInfo + 10 saveSession + 7 visualViewport), **44 test server**
 - **Backend** modulare: `app.js` (factory `createApp`, montabile nei test senza `listen`), `store.js` (store memoria/Mongo con fallback automatico), `validation.js` (payload score), `index.js` (entry sottile con graceful shutdown)
 - **Store**: Mongo opzionale, timeout 3s → store in memoria; risposta API sempre `{ id, name, score, level, lines, date }` (mai `_id`/`__v`)
 - **Leaderboard end-to-end**: game over → best locale → form nome (**nome congelato al primo invio**) → `POST /api/scores` → rank sul board del server; modale Top 10 con badge SERVER/LOCAL e fallback offline
@@ -148,11 +148,26 @@
 - **Inset tastiera simulato a 300px (390×844)**: card `max-height: calc(100% − 300px)`, `scrollHeight 653` / `clientHeight 448` (scrollabile), `padding-bottom 322px`, card `83 → 531` (limite `844 − 300 = 544`), SAVE `[287, 331]` interamente sopra la tastiera, pagina ferma (`scrollTop 0`, `scrollHeight 844 = innerHeight`). Con `--kb-inset: 0` l'overlay landscape mantiene i suoi 6px di padding (`6px / 6px / gap 3px`)
 - Test: `saveSession.test.js` (10) → **100 client**, lint pulito, build **248.07 kB JS (78.08 kB gzip) / 48.43 kB CSS (10.36 kB gzip)**
 
+### Round 13 — Card usabile con la tastiera aperta (sheet mode) ✅
+- **Difetto**: con la tastiera aperta la card di game over viveva dentro `.board-frame`, che a 375×370 è largo **151px** perché è la larghezza a vincolare il rapporto 1:2: `RANKINGS` / `PLAY AGAIN` si tagliavano in orizzontale e il campo nome era compresso proprio mentre si scrive
+- **Esposizione dello stato**: `visualViewport.js` ora pubblica anche `data-keyboard="on"` su `<html>` quando l'inset supera `KB_ATTR_MIN_INSET = 60px` (CSS non può confrontare una lunghezza con una soglia): attributo e `--kb-inset` sono scritti nello stesso `apply()` rAF, rimosso sotto soglia e allo unmount, nessuno `setState`; `keyboardInset(view)` resta puro e ha un test proprio (`visualViewport.test.js`, 7)
+- **Sheet mode** (`html[data-keyboard='on'] .overlay`): `position: fixed` con 8px di aria (`max(8px, env(safe-area-inset-*))`), `bottom: calc(var(--kb-inset) + …)`, `max-width: 520px` centrata con `margin-inline: auto`, `max-height: none`, `padding-bottom: var(--overlay-pad)` (il `bottom` riserva già la tastiera), `overflow-y: auto` + `-webkit-overflow-scrolling: touch` + `overscroll-behavior: contain`, `z-index: 20` (sopra board e touch layer, sotto il portal dei rankings a 90); stile neon, `border-radius` e scrollbar nascosta invariati. `container-type: inline-size` **non** contiene i discendenti fixed (verificato in Chromium e WebKit), quindi la card esce davvero dal frame
+- **Misure a 375×370, attributo forzato e `--kb-inset: 0px`** (simulazione: il layout viewport ha già assorbito la tastiera, quindi l'inset reale è 0 — è lo stato "sheet" che l'hook accende quando la tastiera copre > 60px):
+  - card **359 × 354** a `x 8 / y 8`, `bottom 362` (≤ 370), `position: fixed`, `z 20`, `scrollHeight = clientHeight = 354` → **niente scroll necessario**: input `240 × 44` a `y 151–195` e `SAVE SCORE` `240 × 44` a `y 199–243` entrambi dentro la card
+  - `RANKINGS` / `REBOOT` **118 × 44**, `scrollWidth 114 = clientWidth 114` → nessun clipping (prima ~63px per colonna contro ~80px di etichetta)
+  - focus sull'input → input visibile, `scrollTop` della card 0, `documentElement.scrollTop` **0**, pagina `scrollHeight 370 = innerHeight`; `scrollIntoView` su SAVE → bottone dentro la card, pagina ancora ferma
+  - 1440 con attributo: card **520px** centrata (460 / 460), quindi il cap funziona
+  - faccia `SCORE SAVED`: card 359 × 354, blocco conferma 240 × 64 dentro la card, `SAVED AS NEO / RANK #1`, 0 clipping, `scrollHeight = clientHeight`
+- **Hook end-to-end** (visualViewport finto via `addInitScript`, 390×844): `vv.height 844` → attributo assente, card `374 × 748` a `y 83`, `--kb-inset 0`; `vv.height 544` → **attributo on**, inset **300px**, card fixed `8 → 536` (= 844 − 300 − 8), SAVE visibile; `vv.height 800` (inset 44 < 60) → attributo **off**, card di nuovo nel frame; `vv.height 544 + offsetTop 120` → inset 180, card `8 → 656`; tastiera chiusa → rect identica a quella iniziale
+- **Nessun cambiamento senza attributo**: baseline catturata prima della modifica e confrontata dopo — a **390×844** card `x 8 / y 83 / 374 × 748`, input `240 × 44` a `y 446`, SAVE `240 × 44` a `y 495`; a **320×568** card `x 35 / y 69 / 250 × 499`, input `220 × 44` a `y 297`, SAVE `220 × 44` a `y 345` — tutte identiche, `position: absolute`, `z 10`, zero scroll
+- **Smoke**: portal nei rankings ancora su `<body>` con backdrop `z 90` (sopra la card `z 20`, `elementFromPoint` colpisce `.lb-modal`), guardia 600 ms intatta (Esc a ~120 ms ignorato, chiusura dopo la grazia), faccia `SAVED` invariata
+- Test: `visualViewport.test.js` (7) → **107 client**, lint pulito, build **248.18 kB JS (78.12 kB gzip) / 48.87 kB CSS (10.44 kB gzip)**
+
 ### Verifica finale
-- `npm test --prefix client` → 100/100
+- `npm test --prefix client` → 107/107
 - `npm test --prefix server` → 44/44
 - `npm run lint --prefix client` → nessun errore
-- `npm run build --prefix client` → build ok (**248.07 kB JS / 48.43 kB CSS**)
+- `npm run build --prefix client` → build ok (**248.18 kB JS / 48.87 kB CSS**)
 
 ## Layout
 
