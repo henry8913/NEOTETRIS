@@ -17,7 +17,7 @@
 - **Build identity**: `buildInfo.js` — `assetName`, `parseEntryAsset`, `buildTag`, `isStale` (puri, testati); tag `BUILD <HASH6>` nella start screen e banner `NEW VERSION AVAILABLE` quando l'HTML servito referenzia un entry diverso (throttle 30s, `cache: 'no-store'`, offline silenzioso)
 - **UI** con `useReducer(reduceAll, null, initAll)` in `App.jsx` (~510 righe): gravity via `setInterval`, lock delay via `useEffect` + `setTimeout`, input tastiera, audio/FX, rilevamento build obsoleta + banner, stato della modale rankings, due composizioni di layout
 - **Rendering**: `components/` (`Board`, `SidePanel`, `ControlsRail`, `MobileHud`, `Joystick`, `TouchControls`, `Overlays`, `Leaderboard`, `Background`, `Fx`, `StatCard`, `pieces`); stili in `App.css` + `index.css` (no framework CSS)
-- **Test**: `node:test` in entrambi i package, nessun framework — **107 test client** (13 tetris + 22 game + 17 leaderboard + 13 joystick + 3 sound + 9 runKey + 4 storage + 9 buildInfo + 10 saveSession + 7 visualViewport), **44 test server**
+- **Test**: `node:test` in entrambi i package, nessun framework — **107 test client** (13 tetris + 22 game + 17 leaderboard + 13 joystick + 3 sound + 9 runKey + 4 storage + 9 buildInfo + 10 saveSession + 7 visualViewport), **63 test server** (23 api + 18 store + 22 validation)
 - **Backend** modulare: `app.js` (factory `createApp`, montabile nei test senza `listen`), `store.js` (store memoria/Mongo con fallback automatico), `validation.js` (payload score), `index.js` (entry sottile con graceful shutdown)
 - **Store**: Mongo opzionale, timeout 3s → store in memoria; risposta API sempre `{ id, name, score, level, lines, date }` (mai `_id`/`__v`)
 - **Leaderboard end-to-end**: game over → best locale → form nome (**nome congelato al primo invio**) → `POST /api/scores` → rank sul board del server; modale Top 10 con badge SERVER/LOCAL e fallback offline
@@ -165,7 +165,7 @@
 
 ### Verifica finale
 - `npm test --prefix client` → 107/107
-- `npm test --prefix server` → 44/44
+- `npm test --prefix server` → 63/63
 - `npm run lint --prefix client` → nessun errore
 - `npm run build --prefix client` → build ok (**248.18 kB JS / 48.87 kB CSS**)
 

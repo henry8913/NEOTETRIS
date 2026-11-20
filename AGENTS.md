@@ -19,7 +19,7 @@ server/     # Express 4 + Mongoose 8 (ESM)
 | `npm run build` | Builds **only** client to `client/dist/` |
 | `npm start` | Production Express server — serves `client/dist` (SPA fallback) when it exists, API only otherwise |
 | `npm test --prefix client` | `node --test` on `src/*.test.js` — **107 tests** |
-| `npm test --prefix server` | `node --test` on `test/*.test.js` — **44 tests** |
+| `npm test --prefix server` | `node --test` on `test/*.test.js` — **63 tests** |
 | `npm run lint` (in `client/`) | ESLint 10 flat config |
 
 Install (each package has own `node_modules`):
@@ -69,7 +69,7 @@ npm install --prefix client && npm install --prefix server
 - **Validation**: `server/src/validation.js` — `validateScorePayload` (strict integers, defaults for missing fields, English errors) + `sanitizeName`. `GET` rejects a non-integer `limit` with 400; `POST` returns 400 with `{ error, details }`.
 - **Hardening**: rate limit 30 POST/min per IP (fixed window, `GET` untouched), JSON body capped at 10 kB, unknown `/api/*` → JSON 404, optional SPA static hosting, error handler (400 on bad JSON, 413 on oversized body).
 - **Entry**: `server/src/index.js` — thin: env → store → app → listen, plus graceful `SIGINT`/`SIGTERM` shutdown with a 10s force-exit guard.
-- **Tests (server)**: `server/test/api.test.js` (15), `store.test.js` (13), `validation.test.js` (16).
+- **Tests (server)**: `server/test/api.test.js` (23), `store.test.js` (18), `validation.test.js` (22).
 
 ## Key conventions
 
