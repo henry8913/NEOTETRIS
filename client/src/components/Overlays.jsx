@@ -13,6 +13,12 @@ import {
 } from '../storage.js';
 import { invalidateScoreCache } from '../scoreCache.js';
 import { makeRunKey } from '../runKey.js';
+import {
+  patchSaveSession,
+  readSaveSession,
+  subscribeSaveSession,
+} from '../saveSession.js';
+import { revealInView } from '../visualViewport.js';
 
 /**
  * The three full-board overlays. They are absolutely positioned inside
@@ -44,6 +50,18 @@ import { makeRunKey } from '../runKey.js';
  * from one run. From `attempted` on, the input is `disabled` + `readOnly`, the
  * submit path reads the frozen name from `lockedNameRef`, and in the error
  * state RETRY is the only actionable control (same name, same key).
+ *
+ * Remount safety: this component is what changes when the layout flips, and the
+ * layout *does* flip mid-save (a resize, a rotation, and on iOS the on-screen
+ * keyboard shrinking the viewport before `layout.js` grew the width guard). The
+ * same element is rendered inside two different `<main>` shells, so React
+ * unmounted the whole stage and rebuilt it with a fresh `Overlays` — idle
+ * status, empty key, no save. Every piece of save state therefore lives in
+ * `saveSession.js`, keyed by `runId`: seeded on mount, written before each
+ * `setState`, and a response that lands after unmount is still recorded. A run
+ * whose store entry says `saved` renders the terminal SCORE SAVED face
+ * immediately, and `pendingOpen` makes the rankings open exactly once — by the
+ * instance that is mounted when the response arrives, whichever that is.
  *
  * The on-screen keyboard is dismissed at the start of every submit
  * (`document.activeElement.blur()`): iOS can keep it over the button and
@@ -80,6 +98,7 @@ function describeError(error) {
 
 export default function Overlays({
   build = '',
+  runId = 0,
   started,
   paused,
   gameOver,
@@ -91,28 +110,34 @@ export default function Overlays({
   onRankings,
   onSaved,
 }) {
-  const [name, setName] = useState(() => normalizeName(loadName()));
-  const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
-  const [attempted, setAttempted] = useState(false);
-  const [saveRank, setSaveRank] = useState(null);
-  const [saveError, setSaveError] = useState('');
-  const [localOnly, setLocalOnly] = useState(false);
-  const [savedName, setSavedName] = useState('');
+  // Snapshot of this run's save state, read once: it seeds every piece of state
+  // and every ref below, so a remount mid-save comes back exactly where the
+  // previous instance was (frozen name, same idempotency key, same status).
+  const [stored] = useState(() => readSaveSession(runId));
+  const [name, setName] = useState(() => stored.name || normalizeName(loadName()));
+  const [saveStatus, setSaveStatus] = useState(stored.status); // idle | saving | saved | error
+  const [attempted, setAttempted] = useState(stored.attempted);
+  const [saveRank, setSaveRank] = useState(stored.rank);
+  const [saveError, setSaveError] = useState(stored.error);
+  const [localOnly, setLocalOnly] = useState(stored.status === 'error');
+  const [savedName, setSavedName] = useState(stored.name);
   // The best carries over from the previous run: Overlays is remounted on START.
   const [best] = useState(() => loadBest());
 
   const inputRef = useRef(null);
-  const busyRef = useRef(false);
+  const busyRef = useRef(stored.status === 'saving');
   const provisionalRef = useRef(null);
   // Terminal latch + the one idempotency key of this run. Both survive every
-  // re-render, and a remount (REBOOT) is what clears them.
-  const savedRef = useRef(false);
-  const keyRef = useRef('');
+  // re-render *and* a remount (they are seeded from the store); a new run gets a
+  // new `runId`, which is what clears them.
+  const savedRef = useRef(stored.status === 'saved');
+  const keyRef = useRef(stored.key);
   // The name is frozen on the first submit attempt; every later attempt (RETRY
   // included) sends this exact string, never whatever the field says.
-  const lockedNameRef = useRef('');
+  const lockedNameRef = useRef(stored.attempted ? stored.name : '');
   // REBOOT can be pressed while a POST is still in flight: from then on the
-  // component is gone and must not open the modal over the new run.
+  // component is gone and must not touch a new run's props (the store write
+  // still happens: the row is on the server either way).
   const aliveRef = useRef(true);
 
   useEffect(() => {
@@ -121,6 +146,45 @@ export default function Overlays({
       aliveRef.current = false;
     };
   }, []);
+
+  /*
+   * Follow the store: a POST started by a previous instance (unmounted by a
+   * layout flip) resolves and records `saved`/`error` there, and this mounted
+   * instance has to render the outcome instead of sitting on "Contacting the
+   * leaderboard…" forever. Patches we made ourselves re-apply identical values,
+   * which React bails out of, so this costs no extra render.
+   */
+  useEffect(
+    () =>
+      subscribeSaveSession(runId, (next) => {
+        setSaveStatus(next.status);
+        setSaveError(next.error);
+        if (next.attempted) setAttempted(true);
+        if (next.name) {
+          setSavedName(next.name);
+          lockedNameRef.current = next.name;
+        }
+        if (next.rank !== null) setSaveRank(next.rank);
+        setLocalOnly(next.status === 'error');
+      }),
+    [runId],
+  );
+
+  /*
+   * `pendingOpen` is the one-shot "the save is confirmed, show the board" flag.
+   * It is written by the submitting instance and consumed here, by whichever
+   * instance is mounted when it appears — so the rankings open exactly once,
+   * even when the response outlived the component that sent it. Clearing it
+   * before calling the props is what makes a second run of this effect (or a
+   * later remount) a no-op.
+   */
+  useEffect(() => {
+    const session = readSaveSession(runId);
+    if (session.status !== 'saved' || !session.pendingOpen) return;
+    patchSaveSession(runId, { pendingOpen: false });
+    onSaved?.(session.savedEntry ?? null);
+    onRankings?.();
+  }, [runId, saveStatus, onSaved, onRankings]);
 
   // A zero-score run has nothing to save, so none of the save machinery
   // (best, badge, form, autofocus, submit) is allowed to run for it.
@@ -152,8 +216,12 @@ export default function Overlays({
     if (saveStatus === 'saving' || saveStatus === 'saved') return;
 
     // One key for the whole run, minted on the first attempt and reused by
-    // RETRY: a POST that timed out after the insert must replay, not duplicate.
-    if (!keyRef.current) keyRef.current = makeRunKey();
+    // RETRY *and* by a later instance after a remount: a POST that timed out
+    // after the insert must replay, not duplicate.
+    if (!keyRef.current) {
+      keyRef.current = makeRunKey();
+      patchSaveSession(runId, { key: keyRef.current });
+    }
 
     // Defence in depth against a slow mobile POST: dismiss the on-screen
     // keyboard (iOS can keep it over the confirmation) and freeze the name for
@@ -170,6 +238,17 @@ export default function Overlays({
     setAttempted(true);
     setSaveStatus('saving');
     setSaveError('');
+    // Store before state: if the layout flips right now and React swaps the
+    // whole stage out, the next instance must come back to a frozen name, the
+    // same key and the same "in flight" status.
+    patchSaveSession(runId, {
+      status: 'saving',
+      name: clean,
+      key: keyRef.current,
+      attempted: true,
+      error: '',
+      pendingOpen: false,
+    });
 
     try {
       const created = await submitScore({
@@ -204,15 +283,22 @@ export default function Overlays({
       setSaveRank(rank);
       setLocalOnly(false);
       setSaveStatus('saved');
-      // Unmounted mid-flight (REBOOT): the row is on the server and in the
-      // local list, but there is no form left to confirm it on.
-      if (!aliveRef.current) return;
-      // Order matters: the highlight is set first, then the dialog opens, so
-      // the new row is already marked when the modal appears. The run is over,
-      // so nothing gets paused.
-      onSaved?.(created);
-      onRankings?.();
+      // Written before the `aliveRef` check: the row is on the server whether or
+      // not this component still exists. `pendingOpen` is consumed by whichever
+      // instance is mounted when it lands (the effect above), so the
+      // confirmation face and the rankings appear exactly once — never a second
+      // form and never a second POST.
+      patchSaveSession(runId, {
+        status: 'saved',
+        name: clean,
+        rank,
+        savedEntry: created,
+        attempted: true,
+        error: '',
+        pendingOpen: true,
+      });
     } catch (error) {
+      const message = describeError(error);
       // Offline / rate-limited / rejected: keep the run on this device, say so
       // and stay put. The one-shot rule only applies to a confirmed save.
       if (!provisionalRef.current) {
@@ -230,10 +316,20 @@ export default function Overlays({
       }
       invalidateScoreCache();
       setLocalOnly(true);
-      setSaveError(describeError(error));
+      setSaveError(message);
       setSaveStatus('error');
+      patchSaveSession(runId, {
+        status: 'error',
+        name: clean,
+        error: message,
+        attempted: true,
+        pendingOpen: false,
+      });
     } finally {
       busyRef.current = false;
+      // Re-assert the frozen name for a response that outlived this instance
+      // (the terminal status was already written above).
+      patchSaveSession(runId, { attempted: true, name: lockedNameRef.current });
     }
   };
 
@@ -312,6 +408,9 @@ export default function Overlays({
               disabled={locked}
               readOnly={locked}
               onChange={(event) => setName(event.target.value)}
+              // The card scrolls (the keyboard shrinks it): make sure the field
+              // and SAVE stay above the keyboard, never the page.
+              onFocus={(event) => revealInView(event.currentTarget)}
             />
             {saveStatus === 'error' ? (
               <button type="submit" className="btn btn--small btn--warn">

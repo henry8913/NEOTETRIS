@@ -9,10 +9,23 @@ import { useCallback, useSyncExternalStore } from 'react';
  * - one compact strip (score/hold/next/mute · board · thumb pad) everywhere
  *   else.
  *
- * Keep in sync with the `@media` blocks at the bottom of App.css.
+ * The `min-width: 640px` on the landscape clause is not cosmetic: it is what
+ * keeps a *portrait* phone from ever matching it. When the on-screen keyboard
+ * opens on iOS, the layout viewport shrinks to the space above the keyboard
+ * (390×844 → ~375×370: the height drops below the width, so the `orientation`
+ * feature itself flips to landscape) and the rule matched a phone held
+ * upright: the app swapped the compact composition for the wide one
+ * mid-overlay, the CONTROLS / CORE·LEVEL·LINES·HOLD·NEXT rails appeared on
+ * both sides, the game-over card was squeezed to ~400px and its text clipped
+ * ("CORE 10…", "EVEL .INES"). A phone in landscape is always at least 640px
+ * wide, a keyboard-shrunk portrait viewport is 375–430px, so the two can no
+ * longer be confused.
+ *
+ * Keep in sync with every `@media` block in App.css that mirrors this query
+ * (grep for `max-height: 560px`).
  */
 export const WIDE_LAYOUT_QUERY =
-  '(min-width: 900px), (orientation: landscape) and (max-height: 560px)';
+  '(min-width: 900px), (orientation: landscape) and (max-height: 560px) and (min-width: 640px)';
 
 /** Reactive `window.matchMedia`, safe during the first (client) render. */
 export function useMediaQuery(query) {

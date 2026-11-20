@@ -5,6 +5,7 @@ import { initAll, reduceAll, fxDone } from './fx.js';
 import { audioState, initAudio, isMuted, playSound, setMuted } from './sound.js';
 import { press } from './input.js';
 import { useWideLayout } from './layout.js';
+import { useKeyboardInset } from './visualViewport.js';
 import Background from './components/Background.jsx';
 import { BoardStage, ClearFlash } from './components/Board.jsx';
 import { DropRipple, LevelWash, Shockwave, SweepFx } from './components/Fx.jsx';
@@ -91,6 +92,11 @@ export default function App() {
   // Desktop / landscape phones get the three-column shell, everything else the
   // compact one. Only the active composition is mounted (no hidden buttons).
   const wide = useWideLayout();
+
+  // Publishes the on-screen keyboard height as `--kb-inset` on <html>, which is
+  // what keeps the overlay cards scrollable and SAVE reachable above the
+  // keyboard. No state, no render: it writes a custom property directly.
+  useKeyboardInset();
 
   // Rankings modal + the run counter that remounts the game-over form.
   const [rankingsOpen, setRankingsOpen] = useState(false);
@@ -371,6 +377,7 @@ export default function App() {
 
         <Overlays
           key={`run-${runId}`}
+          runId={runId}
           build={BUILD_TAG}
           started={started}
           paused={paused}

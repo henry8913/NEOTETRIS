@@ -551,15 +551,42 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Centred with auto margins on the first/last child, not
+     `justify-content: center`: a centred flex line that overflows clips its own
+     top edge and that part can never be scrolled to. Once the on-screen
+     keyboard shrinks the card below its content height the overlay has to
+     scroll from the title down to the buttons, so the free space is absorbed by
+     margins that fall back to 0 on overflow — nothing moves until then. */
+  justify-content: flex-start;
   gap: clamp(4px, 1.6cqw, 12px);
-  padding: clamp(8px, 6%, 22px);
+  --overlay-pad: clamp(8px, 6%, 22px);
+  padding: var(--overlay-pad);
+  /*
+   * Keyboard-aware. `--kb-inset` is the height of the on-screen keyboard,
+   * written on <html> by `useKeyboardInset` (visualViewport.js, 0px when there
+   * is none). The card keeps its `inset: 0` box but may never be taller than
+   * the part of the frame that is still visible, and the extra bottom padding
+   * lets its last row scroll clear of the keyboard. Only the card scrolls: the
+   * shell stays `overflow: hidden`, so the page itself never moves.
+   */
+  max-height: calc(100% - var(--kb-inset, 0px));
+  padding-bottom: calc(var(--overlay-pad) + var(--kb-inset, 0px));
   text-align: center;
   background: rgba(5, 5, 10, 0.9);
   border-radius: 4px;
   backdrop-filter: blur(4px);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* The scrollbar is never shown (the score's slam animation briefly overflows
+     the card); scrolling stays available, the chrome does not shift. */
+  scrollbar-width: none;
   animation: overlay-in 200ms ease-out;
+}
+
+.overlay::-webkit-scrollbar {
+  display: none;
 }
 
 .overlay-title {
@@ -1900,11 +1927,13 @@ button {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   WIDE: ≥ 900px, or a landscape phone (height ≤ 560px).
+   WIDE: ≥ 900px, or a landscape phone (height ≤ 560px, width ≥ 640px).
+   The width guard is what stops a *portrait* phone with the on-screen
+   keyboard open (viewport ~375×370) from matching the landscape clause.
    A centred, capped stage holding [ rail ] [ board ] [ rail ],
    with a stat bar above it on exactly those three tracks.
    ══════════════════════════════════════════════════════════════ */
-@media (min-width: 900px), (orientation: landscape) and (max-height: 560px) {
+@media (min-width: 900px), (orientation: landscape) and (max-height: 560px) and (min-width: 640px) {
   .tetris {
     /* The stage below owns the visible margins; the shell only keeps the
        device insets, so the 24px bottom margin is real on every screen. */
@@ -2227,12 +2256,13 @@ button {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   LANDSCAPE PHONES (height is the binding constraint):
+   LANDSCAPE PHONES (height is the binding constraint; the width guard
+   keeps a keyboard-shrunk portrait viewport — 375×370 — out):
    the stat strip is dropped entirely and its three cards move into the
    right rail, above HOLD / NEXT / MUTE. The 30px it used to cost go back
    to the board, which keeps 360px at 390px of viewport height.
    ══════════════════════════════════════════════════════════════ */
-@media (orientation: landscape) and (max-height: 560px) {
+@media (orientation: landscape) and (max-height: 560px) and (min-width: 640px) {
   .tetris {
     --hud-h: 0px;
     --gap-y: 0px;
@@ -2348,8 +2378,11 @@ button {
   }
 
   .overlay {
+    /* Only the variable: `.overlay` itself owns `padding` (and derives the
+       keyboard-aware `padding-bottom` from it), so the shorthand here would
+       reset that. */
+    --overlay-pad: 6px;
     gap: 3px;
-    padding: 6px;
   }
 
   /* A 180px-wide board still has to fit a six-digit score: stay just under the
@@ -2367,8 +2400,8 @@ button {
   /* Game over on a 145-180px-wide board: the form has to fit in ~290px of
      height without ever scrolling, so every line is trimmed here. */
   .game-over-overlay {
+    --overlay-pad: 6px;
     gap: 2px;
-    padding: 6px;
   }
 
   .game-over-overlay .final-score {
@@ -3145,8 +3178,9 @@ button {
   }
 }
 
-/* Landscape phones: the card must fit ~290px of height, so it stays compact. */
-@media (orientation: landscape) and (max-height: 560px) {
+/* Landscape phones (width ≥ 640px, so a keyboard-shrunk portrait viewport is
+   not one): the card must fit ~290px of height, so it stays compact. */
+@media (orientation: landscape) and (max-height: 560px) and (min-width: 640px) {
   .lb-modal {
     gap: 6px;
     padding: 8px;
@@ -3171,6 +3205,29 @@ button {
     width: 34px;
     height: 34px;
   }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Overlay centring, deliberately last.
+
+   `.overlay` centres its stack with `justify-content: flex-start` + an auto
+   margin on the first and the last child, so an overflowing card (on-screen
+   keyboard) scrolls from its first line instead of clipping the top half —
+   the failure mode of `justify-content: center` in a scroll container.
+
+   These two rules have to come *after* every component rule that sets a
+   `margin` shorthand on the extremes (`.overlay .build-tag`, `.overlay .hint`,
+   `.build-tag--over`): same specificity, and the later declaration wins the
+   `margin-*` longhand. Placed earlier they were cancelled by
+   `margin: 0` / `margin: -2px 0 0`, the free space all landed above the stack
+   and the card hugged its bottom edge.
+   ══════════════════════════════════════════════════════════════ */
+.overlay > :first-child {
+  margin-top: auto;
+}
+
+.overlay > :last-child {
+  margin-bottom: auto;
 }
 
 /* ══════════════════════════════════════════════════════════════
